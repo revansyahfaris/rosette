@@ -1,0 +1,33 @@
+[package]
+name = "rosette"
+version = "0.1.0"
+description = "A writer's workspace with version control and LLM assistance"
+authors = ["Rosette Team"]
+edition = "2021"
+
+[lib]
+name = "rosette_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+git2 = "0.18"
+sqlx = { version = "0.7", features = ["sqlite", "runtime-tokio", "macros"] }
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.11", features = ["json", "stream"] }
+uuid = { version = "1", features = ["v4"] }
+chrono = "0.4"
+thiserror = "1.0"
+anyhow = "1.0"
+
+[features]
+# default = ["custom-protocol"]
+# custom-protocol = ["tauri/custom-protocol"]
+

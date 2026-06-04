@@ -13,7 +13,7 @@ pub async fn init_db(database_url: &str) -> Result<SqlitePool> {
         .connect(database_url)
         .await?;
 
-    // Run migrations
+    // Create tables
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS workspace (
             id TEXT PRIMARY KEY,
@@ -23,7 +23,63 @@ pub async fn init_db(database_url: &str) -> Result<SqlitePool> {
         );"
     ).execute(&pool).await?;
 
-    // Add other tables as defined in GEMINI.md
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS books (
+            id TEXT PRIMARY KEY,
+            slug TEXT UNIQUE NOT NULL,
+            name TEXT NOT NULL,
+            description TEXT,
+            type TEXT DEFAULT 'main',
+            git_path TEXT NOT NULL,
+            created_at INTEGER
+        );"
+    ).execute(&pool).await?;
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS documents (
+            id TEXT PRIMARY KEY,
+            book_id TEXT REFERENCES books(id),
+            file_path TEXT NOT NULL,
+            title TEXT,
+            doc_type TEXT,
+            tags TEXT,
+            created_at INTEGER,
+            modified_at INTEGER
+        );"
+    ).execute(&pool).await?;
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS links (
+            id TEXT PRIMARY KEY,
+            source_book_id TEXT NOT NULL,
+            source_doc_id TEXT NOT NULL,
+            target_book_id TEXT NOT NULL,
+            target_doc_id TEXT NOT NULL,
+            link_type TEXT,
+            context_snippet TEXT,
+            created_at INTEGER
+        );"
+    ).execute(&pool).await?;
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS snapshots (
+            id TEXT PRIMARY KEY,
+            book_id TEXT REFERENCES books(id),
+            git_commit_hash TEXT NOT NULL,
+            name TEXT NOT NULL,
+            description TEXT,
+            created_at INTEGER
+        );"
+    ).execute(&pool).await?;
+
+    // Full-text search virtual table
+    sqlx::query(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
+            title, content, tags,
+            content=documents,
+            content_rowid=id
+        );"
+    ).execute(&pool).await?;
     
     Ok(pool)
 }

@@ -8,6 +8,8 @@ pub struct GitEngine {
     repo: Repository,
 }
 
+use types::Snapshot;
+
 impl GitEngine {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         let repo = Repository::open(path)?;
@@ -17,6 +19,38 @@ impl GitEngine {
     pub fn init<P: AsRef<Path>>(path: P) -> Result<Self> {
         let repo = Repository::init(path)?;
         Ok(Self { repo })
+    }
+
+    pub fn list_snapshots(&self) -> Result<Vec<Snapshot>> {
+        let mut revwalk = self.repo.revwalk()?;
+        
+        // Push HEAD if it exists, ignore if repo is empty/new
+        if let Ok(_) = self.repo.head() {
+            revwalk.push_head()?;
+        }
+
+        let mut snapshots = Vec::new();
+        for id in revwalk {
+            let id = id?;
+            let commit = self.repo.find_commit(id)?;
+            snapshots.push(Snapshot {
+                hash: id.to_string(),
+                name: commit.message().unwrap_or("No message").to_string(),
+                timestamp: commit.time().seconds(),
+            });
+        }
+        Ok(snapshots)
+    }
+
+    pub fn restore_snapshot(&self, hash: &str) -> Result<()> {
+        let id = git2::Oid::from_str(hash)?;
+        let commit = self.repo.find_commit(id)?;
+        let obj = commit.into_object();
+
+        self.repo.checkout_tree(&obj, Some(git2::build::CheckoutBuilder::new().force()))?;
+        self.repo.set_head_detached(id)?;
+        
+        Ok(())
     }
 
     pub fn snapshot(&self, name: &str) -> Result<String> {

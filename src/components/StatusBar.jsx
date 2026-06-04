@@ -1,16 +1,17 @@
 import React from 'react';
 
-export default function StatusBar({ draft, wordCount, model }) {
+export default function StatusBar({ type, draft, wordCount, model }) {
   return (
     <footer style={styles.footer}>
       <div style={styles.section}>
-        <span style={styles.item}>● {draft || 'Draft A'}</span>
+        <span style={styles.item}>TYPE: {type || 'CHAPTER'}</span>
+        <span style={styles.item}>● {draft || 'DRAFT A'}</span>
         <span style={styles.item}>Saved</span>
       </div>
       
       <div style={styles.section}>
-        <span style={styles.item}>{model || 'qwen2.5:7b'}</span>
-        <span style={styles.item}>{wordCount || 0} words</span>
+        <span style={styles.item}>{model}</span>
+        <span style={styles.item}>{wordCount.toLocaleString()} words</span>
       </div>
     </footer>
   );

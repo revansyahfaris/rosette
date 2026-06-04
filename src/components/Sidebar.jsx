@@ -23,12 +23,91 @@ export default function Sidebar({ onSelectFile, onWorkspaceLoaded }) {
   const [bookDocs, setBookDocs] = useState({});
   const [activePanel, setActivePanel] = useState('snapshots');
   const [snapshots, setSnapshots] = useState([]);
+  const [showWorkspaceMenu, setShowWorkspaceMenu] = useState(false);
+  
+  // Workspace management states
+  const [isRenamingWorkspace, setIsRenamingWorkspace] = useState(false);
+  const [renamingWsName, setRenamingWsName] = useState('');
+  const [pendingNewWsPath, setPendingNewWsPath] = useState(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (showWorkspaceMenu) {
+        setShowWorkspaceMenu(false);
+      }
+    };
+    if (showWorkspaceMenu) {
+      document.addEventListener('click', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('click', handleClickOutside);
+    };
+  }, [showWorkspaceMenu]);
+
+  // Inline creation states
+  const [isCreatingBook, setIsCreatingBook] = useState(false);
+  const [newBookName, setNewBookName] = useState('');
+  const [creatingDocInBook, setCreatingDocInBook] = useState(null);
+  const [newDocTitle, setNewDocTitle] = useState('');
 
   useEffect(() => {
     if (workspace) {
+      loadBooks();
       loadSnapshots();
     }
   }, [workspace]);
+
+  const loadBooks = async () => {
+    try {
+      const list = await invoke('list_books');
+      setBooks(list);
+    } catch (e) { console.error(e); }
+  };
+
+  const submitCreateBook = async (e) => {
+    if (e.key === 'Enter' && newBookName.trim()) {
+      const slug = newBookName.toLowerCase().replace(/\s+/g, '-');
+      try {
+        await invoke('create_book', { name: newBookName, slug, bookType: 'main' });
+        setNewBookName('');
+        setIsCreatingBook(false);
+        loadBooks();
+      } catch (e) { console.error(e); }
+    } else if (e.key === 'Escape') {
+      setIsCreatingBook(false);
+      setNewBookName('');
+    }
+  };
+
+  const submitCreateDocument = async (e, bookId, bookPath) => {
+    if (e.key === 'Enter' && newDocTitle.trim()) {
+      const filename = newDocTitle.toLowerCase().replace(/\s+/g, '-');
+      try {
+        await invoke('create_document', { bookId, bookPath, title: newDocTitle, filename });
+        setNewDocTitle('');
+        setCreatingDocInBook(null);
+        // Refresh docs
+        const docs = await invoke('list_documents', { bookId });
+        setBookDocs(prev => ({ ...prev, [bookId]: docs }));
+        setExpandedBooks(prev => ({ ...prev, [bookId]: true }));
+      } catch (e) { console.error(e); }
+    } else if (e.key === 'Escape') {
+      setCreatingDocInBook(null);
+      setNewDocTitle('');
+    }
+  };
+
+  const toggleBook = async (bookId, bookPath) => {
+    const isExpanded = !!expandedBooks[bookId];
+    setExpandedBooks(prev => ({ ...prev, [bookId]: !isExpanded }));
+
+    if (!isExpanded) {
+      try {
+        const docs = await invoke('list_documents', { bookId });
+        setBookDocs(prev => ({ ...prev, [bookId]: docs }));
+      } catch (e) { console.error(e); }
+    }
+  };
 
   const handleOpenWorkspace = async () => {
     try {
@@ -39,27 +118,55 @@ export default function Sidebar({ onSelectFile, onWorkspaceLoaded }) {
         const ws = await invoke('load_workspace', { path: folderPath });
         setWorkspace(ws);
         onWorkspaceLoaded(ws);
-        loadBooks();
-        loadSnapshots();
       } catch (e) {
-        const name = prompt('No vault found. Enter a name for your new chronicle:');
-        if (name) {
-          const ws = await invoke('initialize_workspace', { path: folderPath, name });
-          setWorkspace(ws);
-          onWorkspaceLoaded(ws);
-          loadBooks();
-          loadSnapshots();
-        }
+        // Not a workspace, prepare for setup
+        setPendingNewWsPath(folderPath);
+        const folderName = folderPath.split(/[\\/]/).pop();
+        setRenamingWsName(folderName || 'My Chronicle');
       }
     } catch (error) { console.error(error); }
+    setShowWorkspaceMenu(false);
+  };
+
+  const submitNewWorkspace = async (e) => {
+    if (e.key === 'Enter' && renamingWsName.trim() && pendingNewWsPath) {
+      try {
+        const ws = await invoke('initialize_workspace', { path: pendingNewWsPath, name: renamingWsName });
+        setWorkspace(ws);
+        onWorkspaceLoaded(ws);
+        setPendingNewWsPath(null);
+        setRenamingWsName('');
+      } catch (e) { console.error(e); }
+    } else if (e.key === 'Escape') {
+      setPendingNewWsPath(null);
+      setRenamingWsName('');
+    }
+  };
+
+  const handleRenameWorkspace = () => {
+    setRenamingWsName(workspace.name);
+    setIsRenamingWorkspace(true);
+    setShowWorkspaceMenu(false);
+  };
+
+  const submitRenameWorkspace = async (e) => {
+    if (e.key === 'Enter' && renamingWsName.trim()) {
+      try {
+        await invoke('update_workspace_name', { name: renamingWsName });
+        const updatedWs = { ...workspace, name: renamingWsName };
+        setWorkspace(updatedWs);
+        onWorkspaceLoaded(updatedWs);
+        setIsRenamingWorkspace(false);
+      } catch (e) { console.error(e); }
+    } else if (e.key === 'Escape') {
+      setIsRenamingWorkspace(false);
+    }
   };
 
   const loadSnapshots = async () => {
     if (!workspace) return;
     try {
-      // In a full implementation, we'd list snapshots for the active book or workspace
       // For now, we'll try to list snapshots from the root workspace path if it's a git repo
-      // or just show an empty list if not.
       // const list = await invoke('list_snapshots', { path: workspace.path });
       // setSnapshots(list);
     } catch (e) { console.error(e); }
@@ -111,29 +218,96 @@ export default function Sidebar({ onSelectFile, onWorkspaceLoaded }) {
       <div style={styles.topSection}>
         <div style={styles.header}>
           <div style={styles.workspaceInfo}>
-            <span style={styles.workspaceName}>{workspace?.name || 'NO WORKSPACE'}</span>
-            <button onClick={handleOpenWorkspace} style={styles.chevron}>▾</button>
+            {isRenamingWorkspace ? (
+              <input
+                autoFocus
+                style={styles.renameInput}
+                value={renamingWsName}
+                onChange={(e) => setRenamingWsName(e.target.value)}
+                onKeyDown={submitRenameWorkspace}
+                onBlur={() => setIsRenamingWorkspace(false)}
+              />
+            ) : (
+              <span style={styles.workspaceName}>{workspace?.name || 'NO WORKSPACE'}</span>
+            )}
+            
+            <div style={{ position: 'relative' }}>
+              <button 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowWorkspaceMenu(!showWorkspaceMenu);
+                }} 
+                style={styles.chevron}
+              >
+                ▾
+              </button>
+              {showWorkspaceMenu && (
+                <div style={styles.contextMenu} onClick={(e) => e.stopPropagation()}>
+                  <button style={styles.menuItem} onClick={handleOpenWorkspace}>
+                    {workspace ? 'Switch Workspace' : 'Open Workspace'}
+                  </button>
+                  {workspace && (
+                    <button style={styles.menuItem} onClick={handleRenameWorkspace}>Rename Workspace</button>
+                  )}
+                  <button style={styles.menuItem} onClick={handleOpenWorkspace}>New Workspace</button>
+                </div>
+              )}
+            </div>
           </div>
+
+          {pendingNewWsPath && (
+            <div style={styles.setupCard}>
+              <div style={styles.setupTitle}>New Chronicle</div>
+              <div style={styles.setupDesc}>Choose a name for your vault:</div>
+              <input
+                autoFocus
+                style={styles.setupInput}
+                value={renamingWsName}
+                onChange={(e) => setRenamingWsName(e.target.value)}
+                onKeyDown={submitNewWorkspace}
+                placeholder="Enter name..."
+              />
+              <div style={styles.setupHint}>Press Enter to create</div>
+            </div>
+          )}
           <div style={styles.sectionDivider}>
             <div style={styles.dividerLine} />
-            <span style={styles.sectionLabel}>BOOKS</span>
+            <div style={styles.sectionLabelGroup}>
+              <span style={styles.sectionLabel}>BOOKS</span>
+              <button onClick={() => setIsCreatingBook(true)} style={styles.addBtnSmall}>+</button>
+            </div>
             <div style={styles.dividerLine} />
           </div>
           
-          {workspace && (
-            <button style={styles.topNewBtn}>
-              <span style={styles.btnText}>NEW CHAPTER</span>
-              <span style={styles.plusIcon}>+</span>
-            </button>
+          {isCreatingBook && (
+            <div style={styles.inlineInputWrapper}>
+              <Icon name="book" style={{ color: 'var(--rose-400)', opacity: 0.5 }} />
+              <input
+                autoFocus
+                style={styles.inlineInput}
+                placeholder="Book title..."
+                value={newBookName}
+                onChange={(e) => setNewBookName(e.target.value)}
+                onKeyDown={submitCreateBook}
+                onBlur={() => { setIsCreatingBook(false); setNewBookName(''); }}
+              />
+            </div>
           )}
         </div>
 
         <div style={styles.scrollArea}>
           {books.map(book => (
             <div key={book.id} style={styles.bookGroup}>
-              <div style={styles.bookItem} onClick={() => toggleBook(book.id, book.git_path)}>
-                <Icon name="book" style={{ color: 'var(--rose-300)' }} />
-                <span style={styles.bookName}>{book.name}</span>
+              <div style={styles.bookItem}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1 }} onClick={() => toggleBook(book.id, book.git_path)}>
+                  <Icon name="book" style={{ color: 'var(--rose-300)' }} />
+                  <span style={styles.bookName}>{book.name}</span>
+                </div>
+                <button 
+                  onClick={(e) => { e.stopPropagation(); setCreatingDocInBook(book.id); }} 
+                  style={styles.addBtnSmall}
+                  title="New Chapter"
+                >+</button>
               </div>
               
               {expandedBooks[book.id] && (
@@ -148,12 +322,33 @@ export default function Sidebar({ onSelectFile, onWorkspaceLoaded }) {
                       <span style={styles.docName}>{doc.title || doc.file_path}</span>
                     </div>
                   ))}
+
+                  {creatingDocInBook === book.id && (
+                    <div style={styles.inlineInputWrapperSmall}>
+                      <Icon name="description" style={{ opacity: 0.3, width: 12 }} />
+                      <input
+                        autoFocus
+                        style={styles.inlineInputSmall}
+                        placeholder="Chapter title..."
+                        value={newDocTitle}
+                        onChange={(e) => setNewDocTitle(e.target.value)}
+                        onKeyDown={(e) => submitCreateDocument(e, book.id, book.git_path)}
+                        onBlur={() => { setCreatingDocInBook(null); setNewDocTitle(''); }}
+                      />
+                    </div>
+                  )}
+
+                  {(bookDocs[book.id] || []).length === 0 && creatingDocInBook !== book.id && (
+                    <div style={styles.emptyDocText}>No chapters yet.</div>
+                  )}
                 </div>
               )}
             </div>
           ))}
           {!workspace && (
-            <div style={styles.emptyText}>Open a vault to begin...</div>
+            <div style={styles.emptyContainer}>
+              <div style={styles.emptyText}>Open a vault to begin...</div>
+            </div>
           )}
         </div>
       </div>
@@ -189,16 +384,71 @@ const styles = {
     borderRight: '1px solid var(--rose-100)',
     display: 'flex',
     flexDirection: 'column',
-    height: '100%'
+    height: '100%',
+    zIndex: 10 // Ensure it's above the editor surface
   },
-  topSection: { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' },
-  header: { padding: '20px 15px 10px' },
+  topSection: { flex: 1, display: 'flex', flexDirection: 'column', position: 'relative' },
+  header: { padding: '20px 15px 10px', zIndex: 20 },
   workspaceInfo: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' },
   workspaceName: { fontSize: '12px', fontWeight: 'bold', color: 'var(--rose-900)', letterSpacing: '0.5px' },
   chevron: { background: 'none', border: 'none', color: 'var(--rose-400)', cursor: 'pointer' },
   sectionDivider: { display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '15px' },
   dividerLine: { flex: 1, height: '1px', backgroundColor: 'var(--rose-100)' },
+  sectionLabelGroup: { display: 'flex', alignItems: 'center', gap: '8px' },
   sectionLabel: { fontSize: '9px', fontWeight: '600', color: 'var(--rose-400)', letterSpacing: '2px' },
+  addBtnSmall: {
+    background: 'none',
+    border: '1px solid var(--rose-200)',
+    color: 'var(--rose-400)',
+    borderRadius: '4px',
+    width: '16px',
+    height: '16px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: '12px',
+    cursor: 'pointer',
+    padding: 0,
+    transition: 'all 0.2s'
+  },
+  inlineInputWrapper: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    padding: '6px 8px',
+    margin: '0 15px 10px',
+    backgroundColor: 'white',
+    borderRadius: '4px',
+    border: '1px solid var(--rose-200)'
+  },
+  inlineInputWrapperSmall: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    padding: '4px 8px',
+    margin: '4px 0',
+    backgroundColor: 'rgba(255,255,255,0.5)',
+    borderRadius: '4px',
+    border: '1px solid var(--rose-100)'
+  },
+  inlineInput: {
+    border: 'none',
+    outline: 'none',
+    fontSize: '13px',
+    fontFamily: 'var(--font-serif-display)',
+    width: '100%',
+    color: 'var(--rose-800)',
+    background: 'none'
+  },
+  inlineInputSmall: {
+    border: 'none',
+    outline: 'none',
+    fontSize: '12px',
+    width: '100%',
+    color: 'var(--rose-700)',
+    background: 'none'
+  },
+  emptyDocText: { fontSize: '10px', color: 'var(--rose-300)', padding: '5px 8px', fontStyle: 'italic' },
   scrollArea: { flex: 1, overflowY: 'auto', padding: '0 15px' },
   bookItem: { display: 'flex', alignItems: 'center', gap: '10px', padding: '6px 8px', cursor: 'pointer', borderRadius: '4px', transition: 'all 0.2s' },
   bookName: { fontSize: '13px', fontFamily: 'var(--font-serif-display)', fontWeight: '600', color: 'var(--rose-800)' },
@@ -236,5 +486,73 @@ const styles = {
   },
   btnText: { fontSize: '10px', fontWeight: '600', letterSpacing: '1px' },
   plusIcon: { fontSize: '16px', fontWeight: '300' },
-  emptyText: { textAlign: 'center', color: 'var(--rose-300)', fontSize: '11px', marginTop: '40px', fontStyle: 'italic' }
+  emptyContainer: { display: 'flex', flexDirection: 'column', alignItems: 'center', marginTop: '40px', gap: '15px' },
+  emptyText: { textAlign: 'center', color: 'var(--rose-300)', fontSize: '11px', fontStyle: 'italic' },
+  seedBtn: { 
+    padding: '8px 15px', 
+    backgroundColor: 'transparent', 
+    border: '1px solid var(--rose-200)', 
+    color: 'var(--rose-500)', 
+    fontSize: '10px', 
+    fontWeight: '600', 
+    letterSpacing: '1px', 
+    borderRadius: '4px', 
+    cursor: 'pointer',
+    transition: 'all 0.2s'
+  },
+  contextMenu: {
+    position: 'absolute',
+    top: '25px',
+    left: '0',
+    backgroundColor: 'white',
+    border: '1px solid var(--rose-100)',
+    borderRadius: '4px',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+    zIndex: 100,
+    width: '160px',
+    display: 'flex',
+    flexDirection: 'column',
+    padding: '5px 0'
+  },
+  menuItem: {
+    padding: '8px 12px',
+    border: 'none',
+    background: 'none',
+    textAlign: 'left',
+    fontSize: '11px',
+    color: 'var(--rose-700)',
+    cursor: 'pointer',
+    transition: 'background 0.2s'
+  },
+  renameInput: {
+    fontSize: '12px',
+    fontWeight: 'bold',
+    color: 'var(--rose-900)',
+    border: 'none',
+    borderBottom: '1px solid var(--rose-300)',
+    background: 'none',
+    outline: 'none',
+    width: '70%'
+  },
+  setupCard: {
+    backgroundColor: 'white',
+    border: '1px solid var(--rose-200)',
+    borderRadius: '8px',
+    padding: '15px',
+    margin: '10px 0 20px',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.05)'
+  },
+  setupTitle: { fontSize: '14px', fontFamily: 'var(--font-serif-display)', fontWeight: 'bold', color: 'var(--rose-800)', marginBottom: '5px' },
+  setupDesc: { fontSize: '11px', color: 'var(--rose-500)', marginBottom: '12px' },
+  setupInput: {
+    width: '100%',
+    padding: '8px',
+    borderRadius: '4px',
+    border: '1px solid var(--rose-100)',
+    fontSize: '13px',
+    outline: 'none',
+    color: 'var(--rose-800)',
+    marginBottom: '8px'
+  },
+  setupHint: { fontSize: '9px', color: 'var(--rose-300)', textAlign: 'center', fontStyle: 'italic' }
 };

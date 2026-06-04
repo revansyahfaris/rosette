@@ -16,6 +16,8 @@ import { TextStyle } from '@tiptap/extension-text-style';
 import Blockquote from '@tiptap/extension-blockquote';
 import HorizontalRule from '@tiptap/extension-horizontal-rule';
 import { Color } from '@tiptap/extension-color';
+import Placeholder from '@tiptap/extension-placeholder';
+import CharacterCount from '@tiptap/extension-character-count';
 import { invoke } from '@tauri-apps/api/core';
 import { 
   Bold, Italic, Underline as UnderlineIcon, Strikethrough, 
@@ -116,7 +118,7 @@ const Toolbar = ({ editor }) => {
   );
 };
 
-export default function TiptapEditor({ currentFile }) {
+export default function TiptapEditor({ currentFile, onStatusChange }) {
   const [aiResponse, setAiResponse] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [activeMode, setActiveMode] = useState('novel');
@@ -144,9 +146,25 @@ export default function TiptapEditor({ currentFile }) {
       Blockquote,
       HorizontalRule,
       Color,
+      Placeholder.configure({
+        placeholder: 'Start writing your chronicle...',
+        emptyEditorClass: 'is-editor-empty',
+      }),
+      CharacterCount,
     ],
-    content: `<p style="text-align: center; color: #888; margin-top: 50px;"><em>Select a manuscript from the archives to begin...</em></p>`,
-    editorProps: { attributes: { class: 'focus:outline-none', style: 'outline: none;' } },
+    content: '',
+    editorProps: { 
+      attributes: { 
+        class: 'focus:outline-none', 
+        style: 'outline: none;' 
+      } 
+    },
+    onUpdate: ({ editor }) => {
+      const words = editor.storage.characterCount.words();
+      if (onStatusChange) {
+        onStatusChange({ wordCount: words });
+      }
+    },
     onTransaction: () => {
       setTick(tick => tick + 1);
     },
@@ -157,7 +175,13 @@ export default function TiptapEditor({ currentFile }) {
       if (currentFile?.path && editor) {
         try {
           const content = await invoke('load_document', { path: currentFile.path });
-          editor.commands.setContent(content || '<p></p>');
+          // Strip YAML frontmatter for the editor
+          const body = content.replace(/^---[\s\S]*?---/, '').trim();
+          editor.commands.setContent(body || '<p></p>');
+          
+          if (onStatusChange) {
+            onStatusChange({ wordCount: editor.storage.characterCount.words() });
+          }
         } catch (error) { console.error(error); }
       }
     };
@@ -174,11 +198,6 @@ export default function TiptapEditor({ currentFile }) {
             {currentFile?.name && (
               <header style={styles.docHeader}>
                 <h1 style={styles.docTitle}>{currentFile.name.replace('.md', '')}</h1>
-                <div style={styles.docMetadata}>
-                  <span style={styles.metaItem}>TYPE: CHAPTER</span>
-                  <span style={styles.metaItem}>DRAFT A</span>
-                  <span style={styles.metaItem}>1,240 WORDS</span>
-                </div>
                 <div style={styles.headerDivider} />
               </header>
             )}
@@ -215,7 +234,7 @@ export default function TiptapEditor({ currentFile }) {
           <div style={styles.consistencyCard}>
             <div style={styles.cardIndicator} />
             <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '8px' }}>
-              <span style={{ fontSize: 14, color: 'var(--rose-500)' }}>✨</span>
+              <span style={{ fontSize: 14, color: 'var(--rose-50)' }}>✨</span>
               <span style={styles.cardTitle}>CONSISTENCY CHECK</span>
             </div>
             <p style={styles.cardText}>
@@ -259,8 +278,8 @@ export default function TiptapEditor({ currentFile }) {
 const styles = {
   layout: { display: 'flex', flex: 1, overflow: 'hidden', height: '100%' },
   editorPanel: { flex: 1, display: 'flex', flexDirection: 'column', backgroundColor: 'var(--editor-bg)', overflow: 'hidden' },
-  toolbar: { height: 'var(--toolbar-h)', borderBottom: '1px solid var(--rose-100)', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--panel-bg)', flexShrink: 0 },
-  toolbarContent: { display: 'flex', alignItems: 'center', gap: '10px' },
+  toolbar: { minHeight: 'var(--toolbar-h)', borderBottom: '1px solid var(--rose-100)', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--panel-bg)', flexShrink: 0, padding: '5px' },
+  toolbarContent: { display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', justifyContent: 'center' },
   toolbarSection: { display: 'flex', gap: '2px', alignItems: 'center' },
   toolbarBtn: { background: 'none', border: '1px solid transparent', padding: '6px', cursor: 'pointer', borderRadius: '4px', transition: 'all 0.2s', display: 'flex', alignItems: 'center', justifyContent: 'center' },
   toolbarDivider: { width: '1px', height: '18px', backgroundColor: 'var(--rose-100)', margin: '0 5px' },
@@ -275,11 +294,10 @@ const styles = {
     outline: 'none',
     cursor: 'pointer'
   },
-  scrollArea: { flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', alignItems: 'center' },
-  proseContainer: { width: '100%', maxWidth: '640px', padding: '60px 0', minHeight: '100%' },
+  scrollArea: { flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%' },
+  proseContainer: { width: '100%', maxWidth: '800px', padding: '60px 40px', minHeight: '100%' },
   docHeader: { marginBottom: '40px' },
   docTitle: { fontFamily: 'var(--font-serif-display)', fontSize: '28px', fontWeight: '600', color: 'var(--rose-800)', marginBottom: '10px' },
-  docMetadata: { display: 'flex', gap: '20px', fontSize: '11px', color: 'var(--rose-400)', letterSpacing: '1px' },
   headerDivider: { height: '1px', backgroundColor: 'var(--rose-100)', marginTop: '15px' },
   editorSurface: { fontFamily: 'var(--font-serif-prose)', fontSize: '15px', lineHeight: '1.8', color: '#3e0820' },
   footerOrnament: { textAlign: 'center', marginTop: '60px', opacity: 0.2, color: 'var(--rose-800)', fontSize: '24px' },

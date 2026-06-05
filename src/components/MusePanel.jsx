@@ -90,22 +90,146 @@ const styles = {
     flexDirection: 'column',
     height: '100%'
   },
-  chatHeader: { padding: '15px 20px', borderBottom: '1px solid var(--rose-100)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
-  chatTitle: { fontFamily: 'var(--font-serif-display)', fontSize: '15px', fontWeight: '600', color: 'var(--rose-800)' },
-  chatSettings: { background: 'none', border: 'none', color: 'var(--rose-300)', cursor: 'pointer', fontSize: '14px' },
-  modeTabs: { display: 'flex', borderBottom: '1px solid var(--rose-100)' },
-  modeTab: { flex: 1, padding: '10px 0', border: 'none', background: 'none', fontSize: '9px', fontWeight: '600', color: 'var(--rose-400)', cursor: 'pointer', letterSpacing: '1px' },
-  modeTabActive: { flex: 1, padding: '10px 0', border: 'none', background: '#fff0f5', fontSize: '9px', fontWeight: '600', color: 'var(--rose-700)', borderBottom: '2px solid var(--rose-500)', cursor: 'pointer', letterSpacing: '1px' },
-  chatScroll: { flex: 1, overflowY: 'auto', padding: '20px' },
-  consistencyCard: { backgroundColor: 'white', border: '1px solid var(--rose-100)', borderRadius: '4px', padding: '12px', position: 'relative', marginBottom: '20px', boxShadow: '0 2px 5px rgba(138, 18, 64, 0.05)' },
-  cardIndicator: { position: 'absolute', left: 0, top: 0, bottom: 0, width: '3px', backgroundColor: 'var(--rose-500)' },
-  cardTitle: { fontSize: '9px', fontWeight: '600', color: 'var(--rose-800)', letterSpacing: '1px' },
-  cardText: { fontSize: '12px', color: '#584145', fontStyle: 'italic', lineHeight: '1.5' },
-  aiMessage: { fontSize: '12px', color: '#3e0820', lineHeight: '1.6' },
-  chatInputArea: { padding: '15px', borderTop: '1px solid var(--rose-100)', backgroundColor: 'white' },
-  quickActions: { display: 'flex', gap: '5px', marginBottom: '10px' },
-  quickActionBtn: { fontSize: '9px', padding: '3px 8px', border: '1px solid var(--rose-200)', borderRadius: '10px', background: 'none', color: 'var(--rose-600)', cursor: 'pointer' },
-  inputWrapper: { position: 'relative' },
-  chatInput: { width: '100%', backgroundColor: 'var(--cream)', border: '1px solid var(--rose-100)', borderRadius: '4px', padding: '8px 30px 8px 10px', fontSize: '12px', fontFamily: 'var(--font-serif-prose)', resize: 'none' },
-  sendBtn: { position: 'absolute', right: '5px', bottom: '5px', background: 'var(--rose-600)', color: 'white', border: 'none', borderRadius: '4px', width: '20px', height: '20px', fontSize: '12px', cursor: 'pointer' }
+  chatHeader: {
+    padding: '15px 20px',
+    borderBottom: '1px solid var(--rose-100)',
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center'
+  },
+  chatTitle: {
+    fontFamily: 'var(--font-serif-display)',
+    fontSize: '15px',
+    fontWeight: '600',
+    color: 'var(--rose-800)'
+  },
+  chatSettings: {
+    background: 'none',
+    border: 'none',
+    color: 'var(--rose-300)',
+    cursor: 'pointer',
+    fontSize: '14px'
+  },
+  modeTabs: {
+    display: 'flex',
+    borderBottom: '1px solid var(--rose-100)'
+  },
+  modeTab: {
+    flex: 1, padding: '10px 0',
+    border: 'none',
+    background: 'none',
+    fontSize: '9px',
+    fontWeight: '600',
+    color: 'var(--rose-400)',
+    cursor: 'pointer',
+    letterSpacing: '1px'
+  },
+  modeTabActive: {
+    flex: 1, 
+    padding: '10px 0',
+    border: 'none',
+    background: '#fff0f5',
+    fontSize: '9px',
+    fontWeight: '600',
+    color: 'var(--rose-700)',
+    borderBottom: '2px solid var(--rose-500)',
+    cursor: 'pointer',
+    letterSpacing: '1px'
+  },
+  chatScroll: {
+    flex: 1,
+    overflowY: 'auto',
+    padding: '20px'
+  },
+  consistencyCard: {
+    backgroundColor: 'white',
+    border: '1px solid var(--rose-100)',
+    borderRadius: '4px',
+    padding: '12px',
+    position: 'relative',
+    marginBottom: '20px',
+    boxShadow: '0 2px 5px rgba(138, 18, 64, 0.05)'
+  },
+  cardIndicator: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: '3px',
+    backgroundColor: 'var(--rose-500)'
+  },
+  cardTitle: {
+    fontSize: '9px',
+    fontWeight: '600',
+    color: 'var(--rose-800)',
+    letterSpacing: '1px'
+  },
+  cardText: {
+    fontSize: '12px',
+    color: '#584145',
+    fontStyle: 'italic',
+    lineHeight: '1.5'
+  },
+  aiMessage: {
+    fontSize: '12px',
+    color: '#3e0820',
+    lineHeight: '1.6'
+  },
+  chatInputArea: {
+    padding: '15px',
+    borderTop: '1px solid var(--rose-100)',
+    backgroundColor: 'white'
+  },
+  quickActions: {
+    display: 'flex',
+    gap: '5px',
+    marginBottom: '10px'
+  },
+  quickActionBtn: {
+    fontSize: '9px',
+    padding: '3px 8px',
+    border: '1px solid var(--rose-200)',
+    borderRadius: '10px',
+    background: 'none',
+    color: 'var(--rose-600)',
+    cursor: 'pointer'
+  },
+  inputWrapper: {
+    display: 'flex',
+    alignItems: 'center',
+    position: 'relative',
+    backgroundColor: '#fff0f5', 
+    borderRadius: '6px',
+    padding: '4px 8px',
+    gap: '8px',
+  },
+  chatInput: {
+    flex: 1,
+    resize: 'none',
+    border: 'none',
+    outline: 'none',
+    background: 'transparent',
+    color: '#ff6b81',
+    padding: '8px 4px',
+    fontFamily: 'inherit',
+    fontSize: '14px',
+    lineHeight: '1.5',
+    verticalAlign: 'middle',  
+  },
+  sendBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '32px',
+    height: '32px',
+    borderRadius: '4px',
+    border: 'none',
+    backgroundColor: '#ff6b81', 
+    color: '#fff',
+    cursor: 'pointer',
+    fontSize: '16px',
+    fontWeight: 'bold',
+    transition: 'background-color 0.2s',
+    flexShrink: 0,            
+  }
 };

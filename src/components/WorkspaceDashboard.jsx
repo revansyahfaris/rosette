@@ -43,7 +43,7 @@ export default function WorkspaceDashboard({ workspace, books, onCreateBook, onO
       <div style={styles.content}>
         <section style={styles.section}>
           <div style={styles.sectionHeader}>
-            <h2 style={styles.sectionTitle}>Your Library</h2>
+            <h2 style={styles.sectionTitle}>Your Books</h2>
             {!isCreating && (
               <button onClick={() => setIsCreating(true)} style={styles.actionLink}>+ New Book</button>
             )}

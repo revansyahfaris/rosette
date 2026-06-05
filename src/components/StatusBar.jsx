@@ -1,12 +1,12 @@
 import React from 'react';
 
-export default function StatusBar({ type, draft, wordCount, model }) {
+export default function StatusBar({ type, draft, wordCount, model, isChanged = false }) {
   return (
     <footer style={styles.footer}>
       <div style={styles.section}>
         <span style={styles.item}>TYPE: {type || 'CHAPTER'}</span>
         <span style={styles.item}>● {draft || 'DRAFT A'}</span>
-        <span style={styles.item}>Saved</span>
+        <span style={styles.item}>{isChanged ? 'CHANGED' : 'UNCHANGED'}</span>
       </div>
       
       <div style={styles.section}>

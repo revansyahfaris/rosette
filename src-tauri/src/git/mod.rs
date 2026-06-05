@@ -92,4 +92,11 @@ impl GitEngine {
         
         Ok(())
     }
+
+    pub fn has_uncommitted_changes(&self) -> Result<bool> {
+        let mut opts = git2::StatusOptions::new();
+        opts.include_untracked(true);
+        let statuses = self.repo.statuses(Some(&mut opts))?;
+        Ok(!statuses.is_empty())
+    }
 }

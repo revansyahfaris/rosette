@@ -61,11 +61,22 @@ pub async fn create(
 }
 
 pub async fn list(pool: &SqlitePool) -> Result<Vec<Book>> {
-    let books = sqlx::query_as::<_, Book>("SELECT id, slug, name, description, type as book_type, git_path, created_at FROM books")
-        .fetch_all(pool)
-        .await?;
+    let books = sqlx::query_as::<_, Book>(
+        "SELECT id, slug, name, description, type as book_type, git_path, created_at FROM books ORDER BY sort_order ASC, created_at ASC"
+    )
+    .fetch_all(pool)
+    .await?;
 
     Ok(books)
+}
+
+pub async fn update_book_order(pool: &SqlitePool, id: &str, sort_order: i32) -> Result<()> {
+    sqlx::query("UPDATE books SET sort_order = ? WHERE id = ?")
+        .bind(sort_order)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
 }
 
 pub async fn get_by_slug(pool: &SqlitePool, slug: &str) -> Result<Option<Book>> {
@@ -77,4 +88,40 @@ pub async fn get_by_slug(pool: &SqlitePool, slug: &str) -> Result<Option<Book>> 
     .await?;
 
     Ok(book)
+}
+
+pub async fn rename_book(pool: &SqlitePool, id: &str, new_name: &str) -> Result<()> {
+    sqlx::query("UPDATE books SET name = ? WHERE id = ?")
+        .bind(new_name)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn delete_book(pool: &SqlitePool, id: &str) -> Result<Option<String>> {
+    // Return git_path so we can delete the folder too
+    let book = sqlx::query_as::<_, Book>(
+        "SELECT id, slug, name, description, type as book_type, git_path, created_at FROM books WHERE id = ?"
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
+
+    if let Some(b) = book {
+        // Delete documents first due to foreign key
+        sqlx::query("DELETE FROM documents WHERE book_id = ?")
+            .bind(id)
+            .execute(pool)
+            .await?;
+
+        sqlx::query("DELETE FROM books WHERE id = ?")
+            .bind(id)
+            .execute(pool)
+            .await?;
+            
+        Ok(Some(b.git_path))
+    } else {
+        Ok(None)
+    }
 }

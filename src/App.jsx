@@ -16,7 +16,10 @@ function App() {
   const [books, setBooks] = useState([]);
   const [selectedBookId, setSelectedBookId] = useState(null);
   const [isMuseOpen, setIsMuseOpen] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [editor, setEditor] = useState(null);
+  const [unsavedFiles, setUnsavedFiles] = useState(new Set());
+  const [hasUncommittedChanges, setHasUncommittedChanges] = useState(false);
   const [docStatus, setStatus] = useState({
     wordCount: 0,
     type: 'CHAPTER',
@@ -27,6 +30,24 @@ function App() {
     if (workspace) {
       loadBooks();
     }
+  }, [workspace]);
+
+  useEffect(() => {
+    if (!workspace?.path) return;
+    
+    const checkGit = async () => {
+      try {
+        const changed = await invoke('check_git_status');
+        setHasUncommittedChanges(changed);
+      } catch (e) {
+        console.error(e);
+      }
+    };
+
+    checkGit(); // Initial check
+    const interval = setInterval(checkGit, 2000); // Check every 2 seconds
+    
+    return () => clearInterval(interval);
   }, [workspace]);
 
   const loadBooks = async () => {
@@ -48,18 +69,53 @@ function App() {
     setStatus(prev => ({ ...prev, ...newStatus }));
   };
 
+  const handleRenameDocument = async (id, newTitle) => {
+    try {
+      await invoke('rename_document', { id, newTitle });
+      setActiveFile(prev => ({ ...prev, name: `${newTitle}.md` }));
+    } catch (e) { console.error(e); }
+  };
+
+  const handleBooksReorder = (newBooks) => {
+    setBooks(newBooks);
+  };
+
+  const markUnsaved = (id) => {
+    setUnsavedFiles(prev => {
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+  };
+
+  const markSaved = (id) => {
+    setUnsavedFiles(prev => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', overflow: 'hidden' }}>
-      <TitleBar workspaceName={workspace?.name} activeDraft={docStatus.draft} />
+      <TitleBar 
+        workspaceName={workspace?.name} 
+        activeDraft={docStatus.draft} 
+        onToggleMuse={() => setIsMuseOpen(!isMuseOpen)}
+        onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
+      />
       
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         <Sidebar 
+          isOpen={isSidebarOpen}
           onSelectFile={setActiveFile} 
           onWorkspaceLoaded={setWorkspace} 
           books={books}
           onRefreshBooks={loadBooks}
           selectedBookId={selectedBookId}
           onBookToggle={(id) => setSelectedBookId(id)}
+          onBooksReorder={handleBooksReorder}
+          unsavedFiles={unsavedFiles}
         />
         
         <main style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
@@ -68,6 +124,9 @@ function App() {
               currentFile={activeFile} 
               onStatusChange={handleStatusChange}
               onEditorCreated={setEditor}
+              onRenameDocument={handleRenameDocument}
+              onMarkUnsaved={markUnsaved}
+              onMarkSaved={markSaved}
             />
           ) : workspace ? (
             <WorkspaceDashboard 
@@ -96,6 +155,7 @@ function App() {
         draft={docStatus.draft} 
         wordCount={docStatus.wordCount} 
         model="Qwen 2.5 (Local)" 
+        isChanged={hasUncommittedChanges}
       />
     </div>
   );

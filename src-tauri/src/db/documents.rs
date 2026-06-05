@@ -56,13 +56,31 @@ pub async fn create(
 
 pub async fn list_by_book(pool: &SqlitePool, book_id: &str) -> Result<Vec<Document>> {
     let docs = sqlx::query_as::<_, Document>(
-        "SELECT * FROM documents WHERE book_id = ?"
+        "SELECT * FROM documents WHERE book_id = ? ORDER BY sort_order ASC, created_at ASC"
     )
     .bind(book_id)
     .fetch_all(pool)
     .await?;
 
     Ok(docs)
+}
+
+pub async fn update_document_order(pool: &SqlitePool, id: &str, sort_order: i32) -> Result<()> {
+    sqlx::query("UPDATE documents SET sort_order = ? WHERE id = ?")
+        .bind(sort_order)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn move_document(pool: &SqlitePool, id: &str, new_book_id: &str) -> Result<()> {
+    sqlx::query("UPDATE documents SET book_id = ? WHERE id = ?")
+        .bind(new_book_id)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
 }
 
 pub async fn sync_book_files(pool: &SqlitePool, book_id: &str, book_path: &str) -> Result<()> {
@@ -111,4 +129,34 @@ pub async fn search(pool: &SqlitePool, book_id: &str, query: &str) -> Result<Vec
     .await?;
 
     Ok(docs)
+}
+
+pub async fn rename_document(pool: &SqlitePool, id: &str, new_title: &str) -> Result<()> {
+    sqlx::query("UPDATE documents SET title = ?, modified_at = ? WHERE id = ?")
+        .bind(new_title)
+        .bind(Utc::now().timestamp())
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn delete_document(pool: &SqlitePool, id: &str) -> Result<Option<String>> {
+    let doc = sqlx::query_as::<_, Document>(
+        "SELECT * FROM documents WHERE id = ?"
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
+
+    if let Some(d) = doc {
+        sqlx::query("DELETE FROM documents WHERE id = ?")
+            .bind(id)
+            .execute(pool)
+            .await?;
+        
+        Ok(Some(d.file_path))
+    } else {
+        Ok(None)
+    }
 }

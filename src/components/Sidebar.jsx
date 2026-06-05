@@ -16,7 +16,7 @@ const Icon = ({ name, style }) => {
   );
 };
 
-export default function Sidebar({ onSelectFile, onWorkspaceLoaded, books = [], onRefreshBooks, selectedBookId, onBookToggle }) {
+export default function Sidebar({ isOpen, onSelectFile, onWorkspaceLoaded, books = [], onRefreshBooks, selectedBookId, onBookToggle, onBooksReorder, unsavedFiles = new Set() }) {
   const [workspace, setWorkspace] = useState(null);
   // const [books, setBooks] = useState([]); <-- Removed internal state
   const [expandedBooks, setExpandedBooks] = useState({});
@@ -40,19 +40,93 @@ export default function Sidebar({ onSelectFile, onWorkspaceLoaded, books = [], o
   const [renamingWsName, setRenamingWsName] = useState('');
   const [pendingNewWsPath, setPendingNewWsPath] = useState(null);
 
+  // Generic Context Menu State
+  const [itemContextMenu, setItemContextMenu] = useState(null);
+  
+  // Inline rename states
+  const [renamingBookId, setRenamingBookId] = useState(null);
+  const [renamingBookName, setRenamingBookName] = useState('');
+  const [renamingDocId, setRenamingDocId] = useState(null);
+  const [renamingDocTitle, setRenamingDocTitle] = useState('');
+
   useEffect(() => {
     const handleClickOutside = (e) => {
-      if (showWorkspaceMenu) {
-        setShowWorkspaceMenu(false);
-      }
+      if (showWorkspaceMenu) setShowWorkspaceMenu(false);
+      if (itemContextMenu) setItemContextMenu(null);
     };
-    if (showWorkspaceMenu) {
-      document.addEventListener('click', handleClickOutside);
+    document.addEventListener('click', handleClickOutside);
+    return () => document.removeEventListener('click', handleClickOutside);
+  }, [showWorkspaceMenu, itemContextMenu]);
+
+  const handleContextMenu = (e, type, item, parentInfo = null) => {
+    e.preventDefault();
+    setItemContextMenu({
+      type,
+      item,
+      parentInfo,
+      x: e.clientX,
+      y: e.clientY
+    });
+  };
+
+  const handleRenameItem = () => {
+    if (!itemContextMenu) return;
+    if (itemContextMenu.type === 'book') {
+      setRenamingBookId(itemContextMenu.item.id);
+      setRenamingBookName(itemContextMenu.item.name);
+    } else if (itemContextMenu.type === 'doc') {
+      setRenamingDocId(itemContextMenu.item.id);
+      setRenamingDocTitle(itemContextMenu.item.title || itemContextMenu.item.file_path);
     }
-    return () => {
-      document.removeEventListener('click', handleClickOutside);
-    };
-  }, [showWorkspaceMenu]);
+    setItemContextMenu(null);
+  };
+
+  const handleDeleteItem = async () => {
+    if (!itemContextMenu) return;
+    const { type, item, parentInfo } = itemContextMenu;
+    setItemContextMenu(null);
+
+    const isBook = type === 'book';
+    const itemName = isBook ? item.name : (item.title || item.file_path);
+    
+    if (window.confirm(`Are you sure you want to delete "${itemName}"? This cannot be undone.`)) {
+      try {
+        if (isBook) {
+          await invoke('delete_book', { id: item.id });
+          onRefreshBooks();
+        } else {
+          await invoke('delete_document', { id: item.id, bookPath: parentInfo.git_path });
+          const docs = await invoke('list_documents', { bookId: item.book_id });
+          setBookDocs(prev => ({ ...prev, [item.book_id]: docs }));
+        }
+      } catch (e) { console.error(e); }
+    }
+  };
+
+  const submitRenameBook = async (e, id) => {
+    if (e.key === 'Enter' && renamingBookName.trim()) {
+      try {
+        await invoke('rename_book', { id, newName: renamingBookName });
+        setRenamingBookId(null);
+        onRefreshBooks();
+      } catch (e) { console.error(e); }
+    } else if (e.key === 'Escape') {
+      setRenamingBookId(null);
+    }
+  };
+
+  const submitRenameDoc = async (e, id, bookId) => {
+    if (e.key === 'Enter' && renamingDocTitle.trim()) {
+      try {
+        await invoke('rename_document', { id, newTitle: renamingDocTitle });
+        setRenamingDocId(null);
+        const docs = await invoke('list_documents', { bookId });
+        setBookDocs(prev => ({ ...prev, [bookId]: docs }));
+      } catch (e) { console.error(e); }
+    } else if (e.key === 'Escape') {
+      setRenamingDocId(null);
+    }
+  };
 
   // Inline creation states
   const [isCreatingBook, setIsCreatingBook] = useState(false);
@@ -77,6 +151,114 @@ export default function Sidebar({ onSelectFile, onWorkspaceLoaded, books = [], o
       setSnapshots(list);
     } catch (e) { console.error(e); }
   };
+
+  // --- Drag and Drop State & Handlers ---
+  const [draggedItem, setDraggedItem] = useState(null);
+  const [dragOverId, setDragOverId] = useState(null);
+
+  const handleDragStart = (e, type, item, parentBook = null) => {
+    e.dataTransfer.effectAllowed = 'move';
+    // Firefox requires some data to be set
+    e.dataTransfer.setData('text/plain', item.id);
+    setDraggedItem({ type, item, parentBook });
+  };
+
+  const handleDragEnter = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const handleDragOver = (e, type, id, parentBookId = null) => {
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'move';
+
+    if (!draggedItem) return;
+    // Don't show drop zone if types don't match or crossing books
+    if (draggedItem.type !== type) return;
+    if (type === 'doc' && draggedItem.parentBook?.id !== parentBookId) return;
+
+    if (dragOverId !== id) {
+      setDragOverId(id);
+    }
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverId(null);
+  };
+
+  const handleDragEnd = () => {
+    setDraggedItem(null);
+    setDragOverId(null);
+  };
+
+  const handleDropOnBook = async (e, targetBook) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverId(null);
+    
+    if (!draggedItem || draggedItem.type !== 'book') {
+      setDraggedItem(null);
+      return;
+    }
+
+    if (draggedItem.item.id !== targetBook.id) {
+      const newBooks = [...books];
+      const dragIdx = newBooks.findIndex(b => b.id === draggedItem.item.id);
+      const dropIdx = newBooks.findIndex(b => b.id === targetBook.id);
+      
+      const [movedBook] = newBooks.splice(dragIdx, 1);
+      newBooks.splice(dropIdx, 0, movedBook);
+      
+      // Update UI immediately for responsiveness
+      if (onBooksReorder) onBooksReorder(newBooks);
+      
+      const updates = newBooks.map((b, idx) => [b.id, idx]);
+      try {
+        await invoke('update_book_order', { updates });
+      } catch (err) { 
+        console.error(err); 
+        onRefreshBooks(); // Revert on failure
+      }
+    }
+    setDraggedItem(null);
+  };
+
+  const handleDropOnDoc = async (e, targetDoc, targetBook) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverId(null);
+
+    if (!draggedItem || draggedItem.type !== 'doc' || draggedItem.parentBook.id !== targetBook.id) {
+      setDraggedItem(null);
+      return;
+    }
+
+    if (draggedItem.item.id !== targetDoc.id) {
+      const docs = [...(bookDocs[targetBook.id] || [])];
+      const dragIdx = docs.findIndex(d => d.id === draggedItem.item.id);
+      const dropIdx = docs.findIndex(d => d.id === targetDoc.id);
+      
+      const [movedDoc] = docs.splice(dragIdx, 1);
+      docs.splice(dropIdx, 0, movedDoc);
+      
+      setBookDocs(prev => ({ ...prev, [targetBook.id]: docs }));
+
+      const updates = docs.map((d, idx) => [d.id, idx]);
+      try {
+        await invoke('update_document_order', { updates });
+      } catch (err) { 
+        console.error(err);
+        // On failure, re-fetch to revert
+        const oldDocs = await invoke('list_documents', { bookId: targetBook.id });
+        setBookDocs(prev => ({ ...prev, [targetBook.id]: oldDocs }));
+      }
+    }
+    setDraggedItem(null);
+  };
+  // ------------------------------------
 
   const handleRestoreSnapshot = async (hash) => {
     if (window.confirm("Restore this version? Unsaved changes will be lost.")) {
@@ -140,8 +322,9 @@ export default function Sidebar({ onSelectFile, onWorkspaceLoaded, books = [], o
 
       try {
         const ws = await invoke('load_workspace', { path: folderPath });
-        setWorkspace(ws);
-        onWorkspaceLoaded(ws);
+        const wsWithPath = { ...ws, path: folderPath };
+        setWorkspace(wsWithPath);
+        onWorkspaceLoaded(wsWithPath);
       } catch (e) {
         // Not a workspace, prepare for setup
         setPendingNewWsPath(folderPath);
@@ -156,8 +339,9 @@ export default function Sidebar({ onSelectFile, onWorkspaceLoaded, books = [], o
     if (e.key === 'Enter' && renamingWsName.trim() && pendingNewWsPath) {
       try {
         const ws = await invoke('initialize_workspace', { path: pendingNewWsPath, name: renamingWsName });
-        setWorkspace(ws);
-        onWorkspaceLoaded(ws);
+        const wsWithPath = { ...ws, path: pendingNewWsPath };
+        setWorkspace(wsWithPath);
+        onWorkspaceLoaded(wsWithPath);
         setPendingNewWsPath(null);
         setRenamingWsName('');
       } catch (e) { console.error(e); }
@@ -262,7 +446,7 @@ export default function Sidebar({ onSelectFile, onWorkspaceLoaded, books = [], o
   };
 
   return (
-    <aside style={styles.sidebar}>
+    <aside style={{...styles.sidebar, display: isOpen ? 'flex' : 'none'}}>
       <div style={styles.topSection}>
         <div style={styles.header}>
           <div style={styles.workspaceInfo}>
@@ -276,7 +460,13 @@ export default function Sidebar({ onSelectFile, onWorkspaceLoaded, books = [], o
                 onBlur={() => setIsRenamingWorkspace(false)}
               />
             ) : (
-              <span style={styles.workspaceName}>{workspace?.name || 'NO WORKSPACE'}</span>
+              <span 
+                style={{...styles.workspaceName, cursor: 'pointer'}} 
+                onClick={() => onSelectFile(null)}
+                title="Go to Workspace Dashboard"
+              >
+                {workspace?.name || 'NO WORKSPACE'}
+              </span>
             )}
             
             {workspace && (
@@ -357,10 +547,41 @@ export default function Sidebar({ onSelectFile, onWorkspaceLoaded, books = [], o
         <div style={styles.scrollArea}>
           {books.map(book => (
             <div key={book.id} style={styles.bookGroup}>
-              <div style={styles.bookItem}>
+              <div 
+                style={{
+                  ...styles.bookItem,
+                  ...(dragOverId === book.id ? styles.dragOver : {})
+                }}
+                draggable
+                onDragStart={(e) => handleDragStart(e, 'book', book)}
+                onDragEnter={handleDragEnter}
+                onDragOver={(e) => handleDragOver(e, 'book', book.id)}
+                onDragLeave={handleDragLeave}
+                onDragEnd={handleDragEnd}
+                onDrop={(e) => handleDropOnBook(e, book)}
+                onContextMenu={(e) => handleContextMenu(e, 'book', book)}
+              >
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1 }} onClick={() => toggleBook(book.id, book.git_path)}>
                   <Icon name="book" style={{ color: 'var(--rose-300)' }} />
-                  <span style={styles.bookName}>{book.name}</span>
+                  {renamingBookId === book.id ? (
+                    <input
+                      autoFocus
+                      style={styles.renameInputSmall}
+                      value={renamingBookName}
+                      onChange={(e) => setRenamingBookName(e.target.value)}
+                      onKeyDown={(e) => submitRenameBook(e, book.id)}
+                      onBlur={() => setRenamingBookId(null)}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  ) : (
+                    <span 
+                      style={styles.bookName} 
+                      onDoubleClick={(e) => { e.stopPropagation(); setRenamingBookId(book.id); setRenamingBookName(book.name); }}
+                      title="Double-click to rename"
+                    >
+                      {book.name}
+                    </span>
+                  )}
                 </div>
                 <button 
                   onClick={(e) => { e.stopPropagation(); setCreatingDocInBook(book.id); }} 
@@ -374,11 +595,45 @@ export default function Sidebar({ onSelectFile, onWorkspaceLoaded, books = [], o
                   {(bookDocs[book.id] || []).map(doc => (
                     <div 
                       key={doc.id} 
-                      style={styles.docItem}
-                      onClick={() => onSelectFile({ name: doc.title || doc.file_path, path: `${book.git_path}/${doc.file_path}` })}
+                      style={{
+                        ...styles.docItem,
+                        ...(dragOverId === doc.id ? styles.dragOver : {})
+                      }}
+                      draggable
+                      onDragStart={(e) => handleDragStart(e, 'doc', doc, book)}
+                      onDragEnter={handleDragEnter}
+                      onDragOver={(e) => handleDragOver(e, 'doc', doc.id, book.id)}
+                      onDragLeave={handleDragLeave}
+                      onDragEnd={handleDragEnd}
+                      onDrop={(e) => handleDropOnDoc(e, doc, book)}
+                      onClick={() => onSelectFile({ id: doc.id, name: doc.title || doc.file_path, path: `${book.git_path}/${doc.file_path}` })}
+                      onContextMenu={(e) => handleContextMenu(e, 'doc', doc, book)}
                     >
                       <Icon name="description" style={{ opacity: 0.4, width: 14 }} />
-                      <span style={styles.docName}>{doc.title || doc.file_path}</span>
+                      {renamingDocId === doc.id ? (
+                        <input
+                          autoFocus
+                          style={styles.renameInputSmall}
+                          value={renamingDocTitle}
+                          onChange={(e) => setRenamingDocTitle(e.target.value)}
+                          onKeyDown={(e) => submitRenameDoc(e, doc.id, book.id)}
+                          onBlur={() => setRenamingDocId(null)}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      ) : (
+                        <span 
+                          style={{...styles.docName, flex: 1}}
+                          onDoubleClick={(e) => { 
+                            e.stopPropagation(); 
+                            setRenamingDocId(doc.id); 
+                            setRenamingDocTitle(doc.title || doc.file_path); 
+                          }}
+                          title="Double-click to rename"
+                        >
+                          {doc.title || doc.file_path}
+                        </span>
+                      )}
+                      {unsavedFiles.has(doc.id) && <span style={styles.unsavedDot} />}
                     </div>
                   ))}
 
@@ -411,6 +666,22 @@ export default function Sidebar({ onSelectFile, onWorkspaceLoaded, books = [], o
           )}
         </div>
       </div>
+
+      {itemContextMenu && (
+        <div 
+          style={{
+            ...styles.contextMenu,
+            position: 'fixed',
+            top: itemContextMenu.y,
+            left: itemContextMenu.x,
+            zIndex: 1000
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button style={styles.menuItem} onClick={handleRenameItem}>Rename</button>
+          <button style={{...styles.menuItem, color: 'var(--rose-500)'}} onClick={handleDeleteItem}>Delete</button>
+        </div>
+      )}
 
       <div style={styles.bottomSection}>
         <div style={styles.panelTabs}>
@@ -513,13 +784,25 @@ const styles = {
     color: 'var(--rose-700)',
     background: 'none'
   },
+  renameInputSmall: {
+    border: 'none',
+    borderBottom: '1px solid var(--rose-300)',
+    outline: 'none',
+    fontSize: '13px',
+    width: '100%',
+    color: 'var(--rose-800)',
+    background: 'transparent',
+    fontFamily: 'inherit'
+  },
   emptyDocText: { fontSize: '10px', color: 'var(--rose-300)', padding: '5px 8px', fontStyle: 'italic' },
   scrollArea: { flex: 1, overflowY: 'auto', padding: '0 15px' },
   bookItem: { display: 'flex', alignItems: 'center', gap: '10px', padding: '6px 8px', cursor: 'pointer', borderRadius: '4px', transition: 'all 0.2s' },
+  dragOver: { borderTop: '2px solid var(--rose-400)', backgroundColor: 'var(--rose-50)' },
   bookName: { fontSize: '13px', fontFamily: 'var(--font-serif-display)', fontWeight: '600', color: 'var(--rose-800)' },
   docList: { marginLeft: '12px', borderLeft: '1px solid var(--rose-100)', paddingLeft: '8px', marginTop: '4px' },
   docItem: { display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 8px', cursor: 'pointer', borderRadius: '4px' },
   docName: { fontSize: '12px', color: 'var(--rose-700)' },
+  unsavedDot: { width: '8px', height: '8px', backgroundColor: 'var(--rose-400)', borderRadius: '50%', marginLeft: '5px' },
   bottomSection: { borderTop: '1px solid var(--rose-100)', backgroundColor: 'var(--panel-bg)', display: 'flex', flexDirection: 'column' },
   panelTabs: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', borderBottom: '1px solid var(--rose-50)' },
   tab: { display: 'flex', flexDirection: 'column', alignItems: 'center', background: 'none', border: 'none', padding: '10px 0', cursor: 'pointer', color: 'var(--rose-400)', opacity: 0.6 },

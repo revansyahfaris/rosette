@@ -1,9 +1,17 @@
 import React from 'react';
+import { Sparkles, PanelLeft } from 'lucide-react';
 
-export default function TitleBar({ workspaceName, activeDraft }) {
+export default function TitleBar({ workspaceName, activeDraft, onToggleMuse, onToggleSidebar }) {
   return (
     <header style={styles.header}>
       <div style={styles.left}>
+        <button 
+          style={styles.iconBtn} 
+          onClick={onToggleSidebar}
+          title="Toggle Sidebar"
+        >
+          <PanelLeft size={16} />
+        </button>
         <span className="ornament">§ Rosette §</span>
         <div style={styles.draftBadge}>{activeDraft || 'DRAFT A'}</div>
       </div>
@@ -13,6 +21,14 @@ export default function TitleBar({ workspaceName, activeDraft }) {
       </div>
 
       <div style={styles.right}>
+        <button 
+          style={{...styles.iconBtn, color: 'var(--rose-600)'}} 
+          onClick={onToggleMuse}
+          title="Toggle Muse AI"
+        >
+          <Sparkles size={14} />
+        </button>
+        <div style={styles.vDivider} />
         <button style={styles.iconBtn}>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M8 3v5H3M16 3v5h5M8 21v-5H3M16 21v-5h5" /></svg>
         </button>
@@ -59,7 +75,8 @@ const styles = {
     fontWeight: '600',
     color: 'var(--rose-800)'
   },
-  right: { display: 'flex', gap: '10px' },
+  right: { display: 'flex', gap: '10px', alignItems: 'center' },
+  vDivider: { width: '1px', height: '14px', backgroundColor: 'var(--rose-200)' },
   iconBtn: {
     background: 'none',
     border: 'none',

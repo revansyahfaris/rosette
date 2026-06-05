@@ -118,8 +118,11 @@ const Toolbar = ({ editor }) => {
   );
 };
 
-export default function TiptapEditor({ currentFile, onStatusChange, onEditorCreated }) {
+export default function TiptapEditor({ currentFile, onStatusChange, onEditorCreated, onRenameDocument, onMarkUnsaved, onMarkSaved }) {
   const [, setTick] = useState(0);
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [renameTitle, setRenameTitle] = useState('');
+  const [frontmatter, setFrontmatter] = useState('');
 
   const editor = useEditor({
     extensions: [
@@ -156,10 +159,18 @@ export default function TiptapEditor({ currentFile, onStatusChange, onEditorCrea
         style: 'outline: none;' 
       } 
     },
-    onUpdate: ({ editor }) => {
+    onUpdate: ({ editor, transaction }) => {
       const words = editor.storage.characterCount.words();
       if (onStatusChange) {
         onStatusChange({ wordCount: words });
+      }
+      
+      // Only mark unsaved if the editor is actually focused (meaning a user did it, not a programmatic load)
+      if (editor.isFocused && currentFile?.id && onMarkUnsaved) {
+        // Also check if the document actually changed to avoid marking unsaved on mere selections
+        if (transaction.docChanged) {
+          onMarkUnsaved(currentFile.id);
+        }
       }
     },
     onTransaction: () => {
@@ -178,28 +189,87 @@ export default function TiptapEditor({ currentFile, onStatusChange, onEditorCrea
       if (currentFile?.path && editor) {
         try {
           const content = await invoke('load_document', { path: currentFile.path });
+          
+          // Extract and store YAML frontmatter
+          const match = content.match(/^---[\s\S]*?---/);
+          setFrontmatter(match ? match[0] : '');
+
           // Strip YAML frontmatter for the editor
           const body = content.replace(/^---[\s\S]*?---/, '').trim();
-          editor.commands.setContent(body || '<p></p>');
+          editor.commands.setContent(body || '<p></p>', false);
           
           if (onStatusChange) {
             onStatusChange({ wordCount: editor.storage.characterCount.words() });
           }
-        } catch (error) { console.error(error); }
+        } catch (error) { 
+          console.error(error); 
+        }
       }
     };
     loadFile();
   }, [currentFile, editor]);
 
+  const submitRename = async (e) => {
+    if (e.key === 'Enter' && renameTitle.trim()) {
+      try {
+        if (onRenameDocument && currentFile.id) {
+          await onRenameDocument(currentFile.id, renameTitle);
+        }
+        setIsRenaming(false);
+      } catch (err) { console.error(err); }
+    } else if (e.key === 'Escape') {
+      setIsRenaming(false);
+    }
+  };
+
+  const handleKeyDown = async (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+      e.preventDefault();
+      if (currentFile?.path && editor) {
+        const body = editor.getHTML();
+        const fullContent = frontmatter ? `${frontmatter}\n\n${body}` : body;
+        try {
+          await invoke('save_document', { path: currentFile.path, content: fullContent });
+          if (onMarkSaved && currentFile.id) {
+            onMarkSaved(currentFile.id);
+          }
+        } catch (err) { console.error(err); }
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (currentFile?.name) {
+      setRenameTitle(currentFile.name.replace('.md', ''));
+    }
+  }, [currentFile]);
+
   return (
-    <div style={styles.editorPanel}>
+    <div style={styles.editorPanel} onKeyDown={handleKeyDown}>
       <Toolbar editor={editor} />
       
       <div style={styles.scrollArea}>
         <div style={styles.proseContainer}>
           {currentFile?.name && (
             <header style={styles.docHeader}>
-              <h1 style={styles.docTitle}>{currentFile.name.replace('.md', '')}</h1>
+              {isRenaming ? (
+                <input
+                  autoFocus
+                  style={styles.renameInput}
+                  value={renameTitle}
+                  onChange={(e) => setRenameTitle(e.target.value)}
+                  onKeyDown={submitRename}
+                  onBlur={() => setIsRenaming(false)}
+                />
+              ) : (
+                <h1 
+                  style={{...styles.docTitle, cursor: 'text'}} 
+                  onClick={() => setIsRenaming(true)}
+                  title="Click to rename"
+                >
+                  {renameTitle || currentFile.name.replace('.md', '')}
+                </h1>
+              )}
               <div style={styles.headerDivider} />
             </header>
           )}
@@ -236,6 +306,18 @@ const styles = {
   proseContainer: { width: '100%', maxWidth: '800px', padding: '60px 40px', minHeight: '100%' },
   docHeader: { marginBottom: '40px' },
   docTitle: { fontFamily: 'var(--font-serif-display)', fontSize: '28px', fontWeight: '600', color: 'var(--rose-800)', marginBottom: '10px' },
+  renameInput: {
+    fontFamily: 'var(--font-serif-display)', 
+    fontSize: '28px', 
+    fontWeight: '600', 
+    color: 'var(--rose-900)', 
+    marginBottom: '10px',
+    border: 'none',
+    borderBottom: '2px solid var(--rose-300)',
+    background: 'transparent',
+    outline: 'none',
+    width: '100%'
+  },
   headerDivider: { height: '1px', backgroundColor: 'var(--rose-100)', marginTop: '15px' },
   editorSurface: { fontFamily: 'var(--font-serif-prose)', fontSize: '15px', lineHeight: '1.8', color: '#3e0820' },
   footerOrnament: { textAlign: 'center', marginTop: '60px', opacity: 0.2, color: 'var(--rose-800)', fontSize: '24px' },

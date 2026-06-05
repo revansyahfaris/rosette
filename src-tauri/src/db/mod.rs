@@ -31,7 +31,8 @@ pub async fn init_db(database_url: &str) -> Result<SqlitePool> {
             description TEXT,
             type TEXT DEFAULT 'main',
             git_path TEXT NOT NULL,
-            created_at INTEGER
+            created_at INTEGER,
+            sort_order INTEGER DEFAULT 0
         );"
     ).execute(&pool).await?;
 
@@ -44,9 +45,14 @@ pub async fn init_db(database_url: &str) -> Result<SqlitePool> {
             doc_type TEXT,
             tags TEXT,
             created_at INTEGER,
-            modified_at INTEGER
+            modified_at INTEGER,
+            sort_order INTEGER DEFAULT 0
         );"
     ).execute(&pool).await?;
+
+    // Attempt to add sort_order columns if they don't exist (for existing dev databases)
+    let _ = sqlx::query("ALTER TABLE books ADD COLUMN sort_order INTEGER DEFAULT 0").execute(&pool).await;
+    let _ = sqlx::query("ALTER TABLE documents ADD COLUMN sort_order INTEGER DEFAULT 0").execute(&pool).await;
 
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS links (

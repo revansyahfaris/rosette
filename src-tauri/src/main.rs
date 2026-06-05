@@ -33,15 +33,41 @@ async fn analyze_text(text: String) -> Result<String, rosette_lib::RosetteError>
 }
 
 #[tauri::command]
-fn create_snapshot(path: String, name: String) -> Result<String, rosette_lib::RosetteError> {
-    let git = GitEngine::open(&path).or_else(|_| GitEngine::init(&path))?;
-    git.snapshot(&name)
+async fn create_snapshot(state: State<'_, AppState>, name: String) -> Result<(), rosette_lib::RosetteError> {
+    let db_lock = state.db.lock().await;
+    let pool = db_lock.as_ref().ok_or_else(|| {
+        rosette_lib::RosetteError::Internal("No workspace loaded".into())
+    })?;
+    
+    let books = books::list(pool).await?;
+    
+    for book in books {
+        let git = GitEngine::open(&book.git_path).or_else(|_| GitEngine::init(&book.git_path))?;
+        git.snapshot(&name)?;
+    }
+    
+    Ok(())
 }
 
 #[tauri::command]
-fn list_snapshots(path: String) -> Result<Vec<rosette_lib::git::Snapshot>, rosette_lib::RosetteError> {
-    let git = GitEngine::open(&path)?;
-    git.list_snapshots()
+async fn list_snapshots(state: State<'_, AppState>) -> Result<Vec<rosette_lib::git::Snapshot>, rosette_lib::RosetteError> {
+    let db_lock = state.db.lock().await;
+    let pool = db_lock.as_ref().ok_or_else(|| {
+        rosette_lib::RosetteError::Internal("No workspace loaded".into())
+    })?;
+    
+    // We get snapshots from the first book as a proxy for the workspace timeline.
+    // In a real implementation, we'd either track a central workspace repo,
+    // or merge the timelines. For now, since we snapshot all books simultaneously,
+    // any book's timeline represents the workspace timeline.
+    let books = books::list(pool).await?;
+    if let Some(first_book) = books.first() {
+        if let Ok(git) = GitEngine::open(&first_book.git_path) {
+            return git.list_snapshots();
+        }
+    }
+    
+    Ok(vec![])
 }
 
 #[tauri::command]
@@ -143,6 +169,37 @@ async fn create_book(
 }
 
 #[tauri::command]
+async fn rename_book(
+    state: State<'_, AppState>,
+    id: String,
+    new_name: String
+) -> Result<(), rosette_lib::RosetteError> {
+    let db_lock = state.db.lock().await;
+    let pool = db_lock.as_ref().ok_or_else(|| {
+        rosette_lib::RosetteError::Internal("No workspace loaded".into())
+    })?;
+    
+    books::rename_book(pool, &id, &new_name).await?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn delete_book(
+    state: State<'_, AppState>,
+    id: String
+) -> Result<(), rosette_lib::RosetteError> {
+    let db_lock = state.db.lock().await;
+    let pool = db_lock.as_ref().ok_or_else(|| {
+        rosette_lib::RosetteError::Internal("No workspace loaded".into())
+    })?;
+    
+    if let Some(git_path) = books::delete_book(pool, &id).await? {
+        let _ = std::fs::remove_dir_all(git_path); // Ignore if folder doesn't exist
+    }
+    Ok(())
+}
+
+#[tauri::command]
 async fn list_books(state: State<'_, AppState>) -> Result<Vec<Book>, rosette_lib::RosetteError> {
     let db_lock = state.db.lock().await;
     let pool = db_lock.as_ref().ok_or_else(|| {
@@ -150,6 +207,66 @@ async fn list_books(state: State<'_, AppState>) -> Result<Vec<Book>, rosette_lib
     })?;
     
     books::list(pool).await
+}
+
+#[tauri::command]
+async fn update_book_order(
+    state: State<'_, AppState>,
+    updates: Vec<(String, i32)>
+) -> Result<(), rosette_lib::RosetteError> {
+    let db_lock = state.db.lock().await;
+    let pool = db_lock.as_ref().ok_or_else(|| {
+        rosette_lib::RosetteError::Internal("No workspace loaded".into())
+    })?;
+    
+    for (id, sort_order) in updates {
+        books::update_book_order(pool, &id, sort_order).await?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn update_document_order(
+    state: State<'_, AppState>,
+    updates: Vec<(String, i32)>
+) -> Result<(), rosette_lib::RosetteError> {
+    let db_lock = state.db.lock().await;
+    let pool = db_lock.as_ref().ok_or_else(|| {
+        rosette_lib::RosetteError::Internal("No workspace loaded".into())
+    })?;
+    
+    for (id, sort_order) in updates {
+        documents::update_document_order(pool, &id, sort_order).await?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn move_document_to_book(
+    state: State<'_, AppState>,
+    doc_id: String,
+    new_book_id: String,
+    old_book_path: String,
+    new_book_path: String,
+    file_path: String
+) -> Result<(), rosette_lib::RosetteError> {
+    let db_lock = state.db.lock().await;
+    let pool = db_lock.as_ref().ok_or_else(|| {
+        rosette_lib::RosetteError::Internal("No workspace loaded".into())
+    })?;
+    
+    let old_full_path = std::path::Path::new(&old_book_path).join(&file_path);
+    let new_full_path = std::path::Path::new(&new_book_path).join(&file_path);
+    
+    // Physically move the file
+    if old_full_path.exists() {
+        std::fs::rename(old_full_path, new_full_path)?;
+    }
+    
+    // Update database
+    documents::move_document(pool, &doc_id, &new_book_id).await?;
+    
+    Ok(())
 }
 
 #[tauri::command]
@@ -201,6 +318,39 @@ async fn create_document(
     // Add to DB
     let doc = documents::create(pool, &book_id, &file_path, Some(&title), None, None).await?;
     Ok(doc)
+}
+
+#[tauri::command]
+async fn rename_document(
+    state: State<'_, AppState>,
+    id: String,
+    new_title: String
+) -> Result<(), rosette_lib::RosetteError> {
+    let db_lock = state.db.lock().await;
+    let pool = db_lock.as_ref().ok_or_else(|| {
+        rosette_lib::RosetteError::Internal("No workspace loaded".into())
+    })?;
+    
+    documents::rename_document(pool, &id, &new_title).await?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn delete_document(
+    state: State<'_, AppState>,
+    id: String,
+    book_path: String
+) -> Result<(), rosette_lib::RosetteError> {
+    let db_lock = state.db.lock().await;
+    let pool = db_lock.as_ref().ok_or_else(|| {
+        rosette_lib::RosetteError::Internal("No workspace loaded".into())
+    })?;
+    
+    if let Some(file_path) = documents::delete_document(pool, &id).await? {
+        let full_path = std::path::Path::new(&book_path).join(file_path);
+        let _ = std::fs::remove_file(full_path);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -285,6 +435,27 @@ async fn open_workspace_dialog(app: tauri::AppHandle) -> Result<Vec<FileInfo>, r
     }
 }
 
+#[tauri::command]
+async fn check_git_status(state: State<'_, AppState>) -> Result<bool, rosette_lib::RosetteError> {
+    let db_lock = state.db.lock().await;
+    let pool = match db_lock.as_ref() {
+        Some(p) => p,
+        None => return Ok(false), // No workspace loaded yet
+    };
+    
+    let books = books::list(pool).await.unwrap_or_default();
+    
+    for book in books {
+        if let Ok(git) = GitEngine::open(&book.git_path).or_else(|_| GitEngine::init(&book.git_path)) {
+            if git.has_uncommitted_changes().unwrap_or(false) {
+                return Ok(true);
+            }
+        }
+    }
+    
+    Ok(false)
+}
+
 fn main() {
     tauri::Builder::default()
         .manage(AppState {
@@ -298,16 +469,24 @@ fn main() {
             create_snapshot,
             list_snapshots,
             restore_snapshot,
+            check_git_status,
             save_document,
             load_document,
             initialize_workspace,
             load_workspace,
             update_workspace_name,
             create_book,
+            rename_book,
+            delete_book,
             list_books,
+            update_book_order,
             sync_book,
             list_documents,
             create_document,
+            rename_document,
+            delete_document,
+            update_document_order,
+            move_document_to_book,
             search_documents,
             pick_folder,
             open_workspace_dialog

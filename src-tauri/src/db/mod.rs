@@ -1,4 +1,4 @@
-use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
+use sqlx::{sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous}, SqlitePool};
 use crate::Result;
 
 pub mod workspace;
@@ -8,10 +8,22 @@ pub mod links;
 pub mod snapshots;
 
 pub async fn init_db(database_url: &str) -> Result<SqlitePool> {
-    let pool = SqlitePoolOptions::new()
-        .max_connections(5)
-        .connect(database_url)
-        .await?;
+    // 🌟 PERBAIKAN PERFORMA: Gunakan SqliteConnectOptions untuk menyuntikkan Mode WAL
+    // Kita bersihkan awalan "sqlite:" jika ada pada URL untuk parsing path file murni
+    let connection_path = database_url.strip_prefix("sqlite:").unwrap_or(database_url);
+
+    let connect_options = SqliteConnectOptions::new()
+        .filename(connection_path)
+        .create_if_missing(true)
+        // ⚡ WAL mode membuat operasi Read & Write berjalan simultan tanpa memicu database locked
+        .journal_mode(SqliteJournalMode::Wal)
+        // ⚡ Synchronous Normal memotong latensi penulisan disk I/O secara masif, sangat cocok untuk autosave
+        .synchronous(SqliteSynchronous::Normal);
+
+    // Bangun Pool Koneksi dengan konfigurasi performa di atas
+    let pool = SqlitePool::connect_with(connect_options)
+        .await
+        .map_err(|e| crate::RosetteError::Internal(format!("Gagal membangun pool database: {}", e)))?;
 
     // Create tables
     sqlx::query(

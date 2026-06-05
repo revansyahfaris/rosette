@@ -5,6 +5,11 @@ use crate::commands::validate_safe_path;
 use tokio::io::AsyncWriteExt;
 use regex::Regex;
 
+use once_cell::sync::Lazy;
+static WIKI_LINK_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"\[\[([^\]]+)\]\]").unwrap()
+});
+
 #[tauri::command]
 pub async fn save_document(state: State<'_, AppState>, path: String, content: String) -> Result<(), crate::RosetteError> {
     let ws_lock = state.workspace_path.read().await;
@@ -25,30 +30,41 @@ pub async fn save_document(state: State<'_, AppState>, path: String, content: St
     writer.write_all(content.as_bytes()).await?;
     writer.flush().await?;
 
-    // 3. 🌟 UPGRADE: Otomatisasi Ekstraksi Knowledge Graph Link
-    // Cari pola [[Judul Halaman]] di dalam isi dokumen teks
     let db_lock = state.db.read().await;
     if let Some(pool) = db_lock.as_ref() {
-        // Ambil ID dokumen yang sedang diedit saat ini berdasarkan path-nya
+        // Cari metadata dokumen saat ini di database berdasarkan path-nya
         if let Ok(Some(current_doc)) = documents::search(pool, "", &path).await.map(|v| v.into_iter().next()) {
             
-            // Definisikan regex untuk mendeteksi wiki-links [[Target]]
+            // 🌟 BERSIHKAN LINK LAMA: Agar peta relasi tidak menyimpan tautan yang sudah dihapus penulis
+            let _ = crate::db::links::clear_document_outgoing_links(pool, &current_doc.id).await;
+
+            // Definisikan pola regex untuk menangkap [[Judul Halaman]]
             let re = Regex::new(r"\[\[([^\]]+)\]\]").unwrap();
             let mut detected_links = Vec::new();
             
+            // Cari semua kecocokan di dalam konten teks dokumen
             for cap in re.captures_iter(&content) {
                 if let Some(matched_target) = cap.get(1) {
                     detected_links.push(matched_target.as_str().trim().to_string());
                 }
             }
 
-            // Simpan atau perbarui hubungan link graph ini ke database SQLite kamu
-            // Di sini kamu bisa memanggil fungsi internal dari modul rosette_lib::db::links yang sudah kamu bangun
+            // Hubungkan current_doc.id dengan target_doc.id ke tabel database relasi
             for target_title in detected_links {
-                // Contoh logika: Hubungkan current_doc.id dengan target_title di tabel SQLite database
-                // println!("Menghubungkan Dokumen ID {} menuju ke [[{}]]", current_doc.id, target_title);
-                
-                // let _ = crate::db::links::insert_link(pool, &current_doc.id, &target_title).await;
+                // Cari apakah dokumen target ada di database berdasarkan judulnya
+                if let Ok(Some(target_doc)) = documents::search(pool, "", &target_title).await.map(|v| v.into_iter().next()) {
+                    
+                    // 🌟 SINKRONISASI 5 ARGUMEN: Masukkan relasi lengkap ke tabel SQLite
+                    let _ = crate::db::links::insert_link(
+                        pool, 
+                        &current_doc.book_id,   // 1. source_book_id (Diambil dari metadata dokumen saat ini)
+                        &current_doc.id,        // 2. source_doc_id
+                        &target_doc.book_id,    // 3. target_book_id (Diambil dari metadata dokumen target)
+                        &target_doc.id          // 4. target_doc_id
+                    ).await;
+                    
+                    println!(">>> [Knowledge Graph] Hubungan tersimpan: {} ➔ [[{}]] <<<", current_doc.file_path, target_title);
+                }
             }
         }
     }

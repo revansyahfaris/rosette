@@ -9,7 +9,6 @@ use rosette_lib::db::workspace::{self, Workspace};
 use rosette_lib::db::books::{self, Book};
 use rosette_lib::db::documents::{self, Document};
 use sqlx::SqlitePool;
-use std::sync::Arc;
 use tokio::sync::Mutex;
 use tauri::State;
 
@@ -40,7 +39,7 @@ fn create_snapshot(path: String, name: String) -> Result<String, rosette_lib::Ro
 }
 
 #[tauri::command]
-fn list_snapshots(path: String) -> Result<Vec<rosette_lib::git::types::Snapshot>, rosette_lib::RosetteError> {
+fn list_snapshots(path: String) -> Result<Vec<rosette_lib::git::Snapshot>, rosette_lib::RosetteError> {
     let git = GitEngine::open(&path)?;
     git.list_snapshots()
 }
@@ -48,7 +47,7 @@ fn list_snapshots(path: String) -> Result<Vec<rosette_lib::git::types::Snapshot>
 #[tauri::command]
 fn restore_snapshot(path: String, hash: String) -> Result<(), rosette_lib::RosetteError> {
     let git = GitEngine::open(&path)?;
-    git.restore_snapshot(&hash)
+    git.restore(&hash)
 }
 
 #[tauri::command]
@@ -69,16 +68,10 @@ async fn initialize_workspace(
     path: String,
     name: String
 ) -> Result<Workspace, rosette_lib::RosetteError> {
-    let db_path_buf = std::path::Path::new(&path).join("rosette.db");
-    let db_path = format!("sqlite://{}", db_path_buf.to_string_lossy().replace("\\", "/"));
+    let db_path = format!("sqlite:{}/rosette.db", path);
     let pool = db::init_db(&db_path).await?;
     
-    // Check if workspace already exists
-    let ws = if let Some(existing_ws) = workspace::get(&pool).await? {
-        existing_ws
-    } else {
-        workspace::create(&pool, &name).await?
-    };
+    let ws = workspace::create(&pool, &name).await?;
     
     let mut db_state = state.db.lock().await;
     *db_state = Some(pool);
@@ -94,8 +87,7 @@ async fn load_workspace(
     state: State<'_, AppState>,
     path: String
 ) -> Result<Workspace, rosette_lib::RosetteError> {
-    let db_path_buf = std::path::Path::new(&path).join("rosette.db");
-    let db_path = format!("sqlite://{}", db_path_buf.to_string_lossy().replace("\\", "/"));
+    let db_path = format!("sqlite:{}/rosette.db", path);
     let pool = db::init_db(&db_path).await?;
     
     let ws = workspace::get(&pool).await?.ok_or_else(|| {
@@ -109,6 +101,24 @@ async fn load_workspace(
     *path_state = Some(path);
     
     Ok(ws)
+}
+
+#[tauri::command]
+async fn update_workspace_name(
+    state: State<'_, AppState>,
+    name: String
+) -> Result<(), rosette_lib::RosetteError> {
+    let db_lock = state.db.lock().await;
+    let pool = db_lock.as_ref().ok_or_else(|| {
+        rosette_lib::RosetteError::Internal("No workspace loaded".into())
+    })?;
+    
+    let ws = workspace::get(pool).await?.ok_or_else(|| {
+        rosette_lib::RosetteError::Internal("No workspace found".into())
+    })?;
+    
+    workspace::update_name(pool, &ws.id, &name).await?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -170,6 +180,30 @@ async fn list_documents(
 }
 
 #[tauri::command]
+async fn create_document(
+    state: State<'_, AppState>,
+    book_id: String,
+    book_path: String,
+    title: String,
+    filename: String
+) -> Result<Document, rosette_lib::RosetteError> {
+    let db_lock = state.db.lock().await;
+    let pool = db_lock.as_ref().ok_or_else(|| {
+        rosette_lib::RosetteError::Internal("No workspace loaded".into())
+    })?;
+    
+    let file_path = format!("{}.md", filename);
+    let full_path = std::path::Path::new(&book_path).join(&file_path);
+    
+    // Create file
+    std::fs::write(&full_path, format!("---\ntitle: \"{}\"\n---\n\n", title))?;
+    
+    // Add to DB
+    let doc = documents::create(pool, &book_id, &file_path, Some(&title), None, None).await?;
+    Ok(doc)
+}
+
+#[tauri::command]
 async fn search_documents(
     state: State<'_, AppState>,
     book_id: String,
@@ -188,6 +222,21 @@ struct FileInfo {
     name: String,
     path: String,
     is_dir: bool,
+}
+
+#[tauri::command]
+async fn pick_folder(app: tauri::AppHandle) -> Result<String, rosette_lib::RosetteError> {
+    use tauri_plugin_dialog::DialogExt;
+    let folder = app.dialog().file().blocking_pick_folder();
+    if let Some(path) = folder {
+        let path_str = match path {
+            tauri_plugin_dialog::FilePath::Path(p) => p.to_string_lossy().into_owned(),
+            tauri_plugin_dialog::FilePath::Url(u) => u.to_file_path().map_err(|_| rosette_lib::RosetteError::Internal("Invalid URL".into()))?.to_string_lossy().into_owned(),
+        };
+        Ok(path_str)
+    } else {
+        Err(rosette_lib::RosetteError::Internal("Cancelled".into()))
+    }
 }
 
 #[tauri::command]
@@ -236,70 +285,6 @@ async fn open_workspace_dialog(app: tauri::AppHandle) -> Result<Vec<FileInfo>, r
     }
 }
 
-#[tauri::command]
-async fn pick_folder(app: tauri::AppHandle) -> Result<Option<String>, rosette_lib::RosetteError> {
-    use tauri_plugin_dialog::DialogExt;
-    let folder_path = app.dialog().file().blocking_pick_folder();
-    
-    if let Some(path) = folder_path {
-        let path_str = match path {
-            tauri_plugin_dialog::FilePath::Path(p) => p.to_string_lossy().into_owned(),
-            tauri_plugin_dialog::FilePath::Url(u) => u.to_file_path().map_err(|_| rosette_lib::RosetteError::Internal("Invalid URL path".into()))?.to_string_lossy().into_owned(),
-        };
-        Ok(Some(path_str))
-    } else {
-        Ok(None)
-    }
-}
-
-#[tauri::command]
-async fn create_document(
-    state: State<'_, AppState>,
-    book_id: String,
-    book_path: String,
-    title: String,
-    filename: String
-) -> Result<Document, rosette_lib::RosetteError> {
-    let db_lock = state.db.lock().await;
-    let pool = db_lock.as_ref().ok_or_else(|| {
-        rosette_lib::RosetteError::Internal("No workspace loaded".into())
-    })?;
-
-    // 1. Create file on disk
-    let full_filename = if filename.ends_with(".md") { filename } else { format!("{}.md", filename) };
-    let file_path = std::path::Path::new(&book_path).join(&full_filename);
-    
-    if file_path.exists() {
-        return Err(rosette_lib::RosetteError::Internal("File already exists".into()));
-    }
-
-    let initial_content = format!("---\ntitle: \"{}\"\ntype: \"chapter\"\n---\n", title);
-    std::fs::write(&file_path, initial_content)?;
-
-    // 2. Create in DB
-    let doc = documents::create(pool, &book_id, &full_filename, Some(&title), Some("chapter"), None).await?;
-    
-    Ok(doc)
-}
-
-#[tauri::command]
-async fn update_workspace_name(
-    state: State<'_, AppState>,
-    name: String
-) -> Result<(), rosette_lib::RosetteError> {
-    let db_lock = state.db.lock().await;
-    let pool = db_lock.as_ref().ok_or_else(|| {
-        rosette_lib::RosetteError::Internal("No workspace loaded".into())
-    })?;
-    
-    let ws = workspace::get(pool).await?.ok_or_else(|| {
-        rosette_lib::RosetteError::Internal("No workspace found".into())
-    })?;
-    
-    workspace::update_name(pool, &ws.id, &name).await?;
-    Ok(())
-}
-
 fn main() {
     tauri::Builder::default()
         .manage(AppState {
@@ -310,7 +295,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             analyze_text, 
-            create_snapshot, 
+            create_snapshot,
             list_snapshots,
             restore_snapshot,
             save_document,
@@ -322,10 +307,10 @@ fn main() {
             list_books,
             sync_book,
             list_documents,
+            create_document,
             search_documents,
-            open_workspace_dialog,
             pick_folder,
-            create_document
+            open_workspace_dialog
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

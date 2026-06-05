@@ -29,8 +29,7 @@ pub async fn create(
     let git_path = Path::new(base_path).join("books").join(slug);
     let git_path_str = git_path.to_string_lossy().to_string();
 
-    // 1. Ensure directory exists and Initialize Git repository
-    std::fs::create_dir_all(&git_path)?;
+    // 1. Initialize Git repository
     GitEngine::init(&git_path_str)?;
 
     let book = Book {

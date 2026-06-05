@@ -118,10 +118,7 @@ const Toolbar = ({ editor }) => {
   );
 };
 
-export default function TiptapEditor({ currentFile, onStatusChange }) {
-  const [aiResponse, setAiResponse] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [activeMode, setActiveMode] = useState('novel');
+export default function TiptapEditor({ currentFile, onStatusChange, onEditorCreated }) {
   const [, setTick] = useState(0);
 
   const editor = useEditor({
@@ -171,6 +168,12 @@ export default function TiptapEditor({ currentFile, onStatusChange }) {
   });
 
   useEffect(() => {
+    if (editor && onEditorCreated) {
+      onEditorCreated(editor);
+    }
+  }, [editor, onEditorCreated]);
+
+  useEffect(() => {
     const loadFile = async () => {
       if (currentFile?.path && editor) {
         try {
@@ -189,88 +192,23 @@ export default function TiptapEditor({ currentFile, onStatusChange }) {
   }, [currentFile, editor]);
 
   return (
-    <div style={styles.layout}>
-      <div style={styles.editorPanel}>
-        <Toolbar editor={editor} />
-        
-        <div style={styles.scrollArea}>
-          <div style={styles.proseContainer}>
-            {currentFile?.name && (
-              <header style={styles.docHeader}>
-                <h1 style={styles.docTitle}>{currentFile.name.replace('.md', '')}</h1>
-                <div style={styles.headerDivider} />
-              </header>
-            )}
-            <div style={styles.editorSurface}>
-              <EditorContent editor={editor} />
-            </div>
-            <div style={styles.footerOrnament}>§</div>
+    <div style={styles.editorPanel}>
+      <Toolbar editor={editor} />
+      
+      <div style={styles.scrollArea}>
+        <div style={styles.proseContainer}>
+          {currentFile?.name && (
+            <header style={styles.docHeader}>
+              <h1 style={styles.docTitle}>{currentFile.name.replace('.md', '')}</h1>
+              <div style={styles.headerDivider} />
+            </header>
+          )}
+          <div style={styles.editorSurface}>
+            <EditorContent editor={editor} />
           </div>
+          <div style={styles.footerOrnament}>§</div>
         </div>
       </div>
-
-      <aside style={styles.chatPanel}>
-        <div style={styles.chatHeader}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ color: 'var(--rose-600)' }}>✦</span>
-            <span style={styles.chatTitle}>Muse</span>
-          </div>
-          <button style={styles.chatSettings}><Settings size={14} /></button>
-        </div>
-
-        <div style={styles.modeTabs}>
-          {['novel', 'worldbuild', 'research'].map(mode => (
-            <button 
-              key={mode}
-              style={activeMode === mode ? styles.modeTabActive : styles.modeTab}
-              onClick={() => setActiveMode(mode)}
-            >
-              {mode.toUpperCase()}
-            </button>
-          ))}
-        </div>
-
-        <div style={styles.chatScroll}>
-          <div style={styles.consistencyCard}>
-            <div style={styles.cardIndicator} />
-            <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '8px' }}>
-              <span style={{ fontSize: 14, color: 'var(--rose-50)' }}>✨</span>
-              <span style={styles.cardTitle}>CONSISTENCY CHECK</span>
-            </div>
-            <p style={styles.cardText}>
-              "The atmosphere in this chamber feels consistent with your description of the Ashen Court."
-            </p>
-          </div>
-          
-          <div style={styles.aiMessage}>
-            {aiResponse || 'Awaiting your command...'}
-          </div>
-        </div>
-
-        <div style={styles.chatInputArea}>
-          <div style={styles.quickActions}>
-            <button style={styles.quickActionBtn}>Check pacing</button>
-            <button style={styles.quickActionBtn}>Suggest next</button>
-          </div>
-          <div style={styles.inputWrapper}>
-            <textarea style={styles.chatInput} placeholder="Ask the Muse..." rows={1} />
-            <button 
-              onClick={async () => {
-                if (!editor) return;
-                setIsLoading(true);
-                try {
-                  const res = await invoke('analyze_text', { text: editor.getText() });
-                  setAiResponse(res);
-                } catch(e) { setAiResponse(e); }
-                finally { setIsLoading(false); }
-              }}
-              style={styles.sendBtn}
-            >
-              {isLoading ? '...' : '↑'}
-            </button>
-          </div>
-        </div>
-      </aside>
     </div>
   );
 }

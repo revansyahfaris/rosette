@@ -1,14 +1,13 @@
 pub mod types;
+pub use types::*;
 
-use git2::Repository;
+use git2::{Repository, build::CheckoutBuilder};
 use std::path::Path;
 use crate::Result;
 
 pub struct GitEngine {
     repo: Repository,
 }
-
-use types::Snapshot;
 
 impl GitEngine {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
@@ -19,38 +18,6 @@ impl GitEngine {
     pub fn init<P: AsRef<Path>>(path: P) -> Result<Self> {
         let repo = Repository::init(path)?;
         Ok(Self { repo })
-    }
-
-    pub fn list_snapshots(&self) -> Result<Vec<Snapshot>> {
-        let mut revwalk = self.repo.revwalk()?;
-        
-        // Push HEAD if it exists, ignore if repo is empty/new
-        if let Ok(_) = self.repo.head() {
-            revwalk.push_head()?;
-        }
-
-        let mut snapshots = Vec::new();
-        for id in revwalk {
-            let id = id?;
-            let commit = self.repo.find_commit(id)?;
-            snapshots.push(Snapshot {
-                hash: id.to_string(),
-                name: commit.message().unwrap_or("No message").to_string(),
-                timestamp: commit.time().seconds(),
-            });
-        }
-        Ok(snapshots)
-    }
-
-    pub fn restore_snapshot(&self, hash: &str) -> Result<()> {
-        let id = git2::Oid::from_str(hash)?;
-        let commit = self.repo.find_commit(id)?;
-        let obj = commit.into_object();
-
-        self.repo.checkout_tree(&obj, Some(git2::build::CheckoutBuilder::new().force()))?;
-        self.repo.set_head_detached(id)?;
-        
-        Ok(())
     }
 
     pub fn snapshot(&self, name: &str) -> Result<String> {
@@ -84,5 +51,45 @@ impl GitEngine {
         )?;
 
         Ok(commit_id.to_string())
+    }
+
+    pub fn list_snapshots(&self) -> Result<Vec<Snapshot>> {
+        let mut revwalk = self.repo.revwalk()?;
+        
+        // Only push HEAD if it exists (repo is not empty)
+        if self.repo.head().is_ok() {
+            revwalk.push_head()?;
+        }
+
+        let mut snapshots = Vec::new();
+        for id in revwalk {
+            let id = id?;
+            let commit = self.repo.find_commit(id)?;
+            let timestamp = commit.time().seconds();
+            let message = commit.message().unwrap_or("").to_string();
+            
+            snapshots.push(Snapshot {
+                id: id.to_string(),
+                hash: id.to_string(),
+                name: message.clone(),
+                message,
+                timestamp,
+            });
+        }
+        Ok(snapshots)
+    }
+
+    pub fn restore(&self, hash: &str) -> Result<()> {
+        let oid = git2::Oid::from_str(hash)?;
+        let commit = self.repo.find_commit(oid)?;
+        
+        self.repo.checkout_tree(
+            commit.as_object(),
+            Some(CheckoutBuilder::new().force())
+        )?;
+        
+        self.repo.set_head_detached(oid)?;
+        
+        Ok(())
     }
 }

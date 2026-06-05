@@ -16,15 +16,25 @@ const Icon = ({ name, style }) => {
   );
 };
 
-export default function Sidebar({ onSelectFile, onWorkspaceLoaded }) {
+export default function Sidebar({ onSelectFile, onWorkspaceLoaded, books = [], onRefreshBooks, selectedBookId, onBookToggle }) {
   const [workspace, setWorkspace] = useState(null);
-  const [books, setBooks] = useState([]);
+  // const [books, setBooks] = useState([]); <-- Removed internal state
   const [expandedBooks, setExpandedBooks] = useState({});
   const [bookDocs, setBookDocs] = useState({});
   const [activePanel, setActivePanel] = useState('snapshots');
   const [snapshots, setSnapshots] = useState([]);
   const [showWorkspaceMenu, setShowWorkspaceMenu] = useState(false);
   
+  // Auto-expand book if selected from outside (e.g. Dashboard)
+  useEffect(() => {
+    if (selectedBookId && !expandedBooks[selectedBookId]) {
+      const book = books.find(b => b.id === selectedBookId);
+      if (book) {
+        toggleBook(book.id, book.git_path);
+      }
+    }
+  }, [selectedBookId]);
+
   // Workspace management states
   const [isRenamingWorkspace, setIsRenamingWorkspace] = useState(false);
   const [renamingWsName, setRenamingWsName] = useState('');
@@ -49,19 +59,33 @@ export default function Sidebar({ onSelectFile, onWorkspaceLoaded }) {
   const [newBookName, setNewBookName] = useState('');
   const [creatingDocInBook, setCreatingDocInBook] = useState(null);
   const [newDocTitle, setNewDocTitle] = useState('');
+  const [isCreatingSnapshot, setIsCreatingSnapshot] = useState(false);
+  const [newSnapshotName, setNewSnapshotName] = useState('');
 
   useEffect(() => {
     if (workspace) {
-      loadBooks();
+      // loadBooks(); <-- Now handled by App.jsx
       loadSnapshots();
     }
   }, [workspace]);
 
-  const loadBooks = async () => {
+  const loadSnapshots = async () => {
+    if (!workspace) return;
     try {
-      const list = await invoke('list_books');
-      setBooks(list);
+      // For now, snapshots are at workspace root path
+      const list = await invoke('list_snapshots', { path: workspace.path || '.' });
+      setSnapshots(list);
     } catch (e) { console.error(e); }
+  };
+
+  const handleRestoreSnapshot = async (hash) => {
+    if (window.confirm("Restore this version? Unsaved changes will be lost.")) {
+      try {
+        await invoke('restore_snapshot', { path: workspace.path || '.', hash });
+        onRefreshBooks();
+        loadSnapshots();
+      } catch (e) { console.error(e); }
+    }
   };
 
   const submitCreateBook = async (e) => {
@@ -71,7 +95,7 @@ export default function Sidebar({ onSelectFile, onWorkspaceLoaded }) {
         await invoke('create_book', { name: newBookName, slug, bookType: 'main' });
         setNewBookName('');
         setIsCreatingBook(false);
-        loadBooks();
+        onRefreshBooks(); // Refresh parent state
       } catch (e) { console.error(e); }
     } else if (e.key === 'Escape') {
       setIsCreatingBook(false);
@@ -163,13 +187,18 @@ export default function Sidebar({ onSelectFile, onWorkspaceLoaded }) {
     }
   };
 
-  const loadSnapshots = async () => {
-    if (!workspace) return;
-    try {
-      // For now, we'll try to list snapshots from the root workspace path if it's a git repo
-      // const list = await invoke('list_snapshots', { path: workspace.path });
-      // setSnapshots(list);
-    } catch (e) { console.error(e); }
+  const handleCreateSnapshot = async (e) => {
+    if (e.key === 'Enter' && newSnapshotName.trim()) {
+      try {
+        await invoke('create_snapshot', { path: workspace.path || '.', name: newSnapshotName });
+        setNewSnapshotName('');
+        setIsCreatingSnapshot(false);
+        loadSnapshots();
+      } catch (e) { console.error(e); }
+    } else if (e.key === 'Escape') {
+      setIsCreatingSnapshot(false);
+      setNewSnapshotName('');
+    }
   };
 
   const renderPanelContent = () => {
@@ -177,15 +206,34 @@ export default function Sidebar({ onSelectFile, onWorkspaceLoaded }) {
       case 'snapshots':
         return (
           <div style={styles.panelContent}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+              <span style={styles.panelSubTitle}>Timeline</span>
+              <button onClick={() => setIsCreatingSnapshot(true)} style={styles.addBtnSmall}>+</button>
+            </div>
+
+            {isCreatingSnapshot && (
+              <div style={styles.inlineInputWrapperSmall}>
+                <input
+                  autoFocus
+                  style={styles.inlineInputSmall}
+                  placeholder="Snapshot name..."
+                  value={newSnapshotName}
+                  onChange={(e) => setNewSnapshotName(e.target.value)}
+                  onKeyDown={handleCreateSnapshot}
+                  onBlur={() => { setIsCreatingSnapshot(false); setNewSnapshotName(''); }}
+                />
+              </div>
+            )}
+
             {snapshots.length === 0 ? (
               <div style={styles.emptyPanelText}>No archives preserved yet.</div>
             ) : (
               snapshots.map((ss, idx) => (
-                <div key={idx} style={styles.snapshotItem}>
+                <div key={idx} style={styles.snapshotItem} onClick={() => handleRestoreSnapshot(ss.hash)}>
                   <div style={styles.ssDot} />
                   <div style={styles.ssInfo}>
                     <div style={styles.ssName}>{ss.name}</div>
-                    <div style={styles.ssDate}>{new Date(ss.timestamp * 1000).toLocaleDateString()}</div>
+                    <div style={styles.ssDate}>{new Date(ss.timestamp * 1000).toLocaleString()}</div>
                   </div>
                 </div>
               ))
@@ -231,29 +279,38 @@ export default function Sidebar({ onSelectFile, onWorkspaceLoaded }) {
               <span style={styles.workspaceName}>{workspace?.name || 'NO WORKSPACE'}</span>
             )}
             
-            <div style={{ position: 'relative' }}>
-              <button 
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowWorkspaceMenu(!showWorkspaceMenu);
-                }} 
-                style={styles.chevron}
-              >
-                ▾
-              </button>
-              {showWorkspaceMenu && (
-                <div style={styles.contextMenu} onClick={(e) => e.stopPropagation()}>
-                  <button style={styles.menuItem} onClick={handleOpenWorkspace}>
-                    {workspace ? 'Switch Workspace' : 'Open Workspace'}
-                  </button>
-                  {workspace && (
+            {workspace && (
+              <div style={{ position: 'relative' }}>
+                <button 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowWorkspaceMenu(!showWorkspaceMenu);
+                  }} 
+                  style={styles.chevron}
+                >
+                  ▾
+                </button>
+                {showWorkspaceMenu && (
+                  <div style={styles.contextMenu} onClick={(e) => e.stopPropagation()}>
                     <button style={styles.menuItem} onClick={handleRenameWorkspace}>Rename Workspace</button>
-                  )}
-                  <button style={styles.menuItem} onClick={handleOpenWorkspace}>New Workspace</button>
-                </div>
-              )}
-            </div>
+                    <button style={styles.menuItem} onClick={handleOpenWorkspace}>Switch Workspace</button>
+                    <button style={styles.menuItem} onClick={handleOpenWorkspace}>New Workspace</button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
+
+          {!workspace && !pendingNewWsPath && (
+            <div style={styles.onboardingActions}>
+              <button style={styles.primaryActionBtn} onClick={handleOpenWorkspace}>
+                Open Existing Vault
+              </button>
+              <button style={styles.secondaryActionBtn} onClick={handleOpenWorkspace}>
+                Create New Vault
+              </button>
+            </div>
+          )}
 
           {pendingNewWsPath && (
             <div style={styles.setupCard}>
@@ -274,7 +331,9 @@ export default function Sidebar({ onSelectFile, onWorkspaceLoaded }) {
             <div style={styles.dividerLine} />
             <div style={styles.sectionLabelGroup}>
               <span style={styles.sectionLabel}>BOOKS</span>
-              <button onClick={() => setIsCreatingBook(true)} style={styles.addBtnSmall}>+</button>
+              {workspace && (
+                <button onClick={() => setIsCreatingBook(true)} style={styles.addBtnSmall}>+</button>
+              )}
             </div>
             <div style={styles.dividerLine} />
           </div>
@@ -397,19 +456,25 @@ const styles = {
   sectionLabelGroup: { display: 'flex', alignItems: 'center', gap: '8px' },
   sectionLabel: { fontSize: '9px', fontWeight: '600', color: 'var(--rose-400)', letterSpacing: '2px' },
   addBtnSmall: {
-    background: 'none',
+    background: 'var(--rose-50)',
     border: '1px solid var(--rose-200)',
-    color: 'var(--rose-400)',
+    color: 'var(--rose-600)',
     borderRadius: '4px',
-    width: '16px',
-    height: '16px',
+    width: '20px',
+    height: '20px',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    fontSize: '12px',
+    fontSize: '14px',
+    fontWeight: 'bold',
     cursor: 'pointer',
     padding: 0,
-    transition: 'all 0.2s'
+    transition: 'all 0.2s',
+    '&:hover': {
+      backgroundColor: 'var(--rose-100)',
+      borderColor: 'var(--rose-300)',
+      transform: 'scale(1.1)'
+    }
   },
   inlineInputWrapper: {
     display: 'flex',
@@ -463,7 +528,19 @@ const styles = {
   panelBody: { height: '140px', overflowY: 'auto', padding: '10px 15px' },
   panelContent: { display: 'flex', flexDirection: 'column', gap: '10px' },
   emptyPanelText: { fontSize: '10px', color: 'var(--text-muted)', textAlign: 'center', marginTop: '20px', fontStyle: 'italic' },
-  snapshotItem: { display: 'flex', alignItems: 'center', gap: '10px' },
+  panelSubTitle: { fontSize: '9px', fontWeight: 'bold', color: 'var(--rose-400)', letterSpacing: '1px', textTransform: 'uppercase' },
+  snapshotItem: { 
+    display: 'flex', 
+    alignItems: 'center', 
+    gap: '10px', 
+    padding: '8px', 
+    borderRadius: '4px', 
+    cursor: 'pointer',
+    transition: 'background 0.2s',
+    '&:hover': {
+      backgroundColor: 'var(--rose-50)'
+    }
+  },
   ssDot: { width: '6px', height: '6px', borderRadius: '50%', backgroundColor: 'var(--rose-300)' },
   ssInfo: { display: 'flex', flexDirection: 'column' },
   ssName: { fontSize: '11px', color: 'var(--rose-800)', fontWeight: '600' },
@@ -554,5 +631,33 @@ const styles = {
     color: 'var(--rose-800)',
     marginBottom: '8px'
   },
-  setupHint: { fontSize: '9px', color: 'var(--rose-300)', textAlign: 'center', fontStyle: 'italic' }
+  setupHint: { fontSize: '9px', color: 'var(--rose-300)', textAlign: 'center', fontStyle: 'italic' },
+  onboardingActions: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+    marginBottom: '20px'
+  },
+  primaryActionBtn: {
+    backgroundColor: 'var(--rose-600)',
+    color: 'white',
+    border: 'none',
+    padding: '10px',
+    borderRadius: '4px',
+    fontSize: '11px',
+    fontWeight: '600',
+    cursor: 'pointer',
+    transition: 'background 0.2s'
+  },
+  secondaryActionBtn: {
+    backgroundColor: 'transparent',
+    color: 'var(--rose-600)',
+    border: '1px solid var(--rose-200)',
+    padding: '10px',
+    borderRadius: '4px',
+    fontSize: '11px',
+    fontWeight: '600',
+    cursor: 'pointer',
+    transition: 'all 0.2s'
+  }
 };

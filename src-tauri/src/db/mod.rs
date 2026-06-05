@@ -1,6 +1,5 @@
-use sqlx::{sqlite::{SqlitePoolOptions, SqliteConnectOptions}, SqlitePool};
+use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use crate::Result;
-use std::str::FromStr;
 
 pub mod workspace;
 pub mod books;
@@ -9,12 +8,9 @@ pub mod links;
 pub mod snapshots;
 
 pub async fn init_db(database_url: &str) -> Result<SqlitePool> {
-    let connection_options = SqliteConnectOptions::from_str(database_url)?
-        .create_if_missing(true);
-
     let pool = SqlitePoolOptions::new()
         .max_connections(5)
-        .connect_with(connection_options)
+        .connect(database_url)
         .await?;
 
     // Create tables

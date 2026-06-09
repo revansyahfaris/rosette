@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 
 const Icon = ({ name, style }) => {
@@ -24,6 +24,8 @@ export default function Sidebar({ isOpen, onSelectFile, onWorkspaceLoaded, books
   const [activePanel, setActivePanel] = useState('snapshots');
   const [snapshots, setSnapshots] = useState([]);
   const [showWorkspaceMenu, setShowWorkspaceMenu] = useState(false);
+  const [contextMenu, setContextMenu] = useState(null);
+  const sidebarRef = useRef();
   
   // Auto-expand book if selected from outside (e.g. Dashboard)
   useEffect(() => {
@@ -49,25 +51,25 @@ export default function Sidebar({ isOpen, onSelectFile, onWorkspaceLoaded, books
   const [renamingDocId, setRenamingDocId] = useState(null);
   const [renamingDocTitle, setRenamingDocTitle] = useState('');
 
-  useEffect(() => {
-    const handleClickOutside = (e) => {
-      if (showWorkspaceMenu) setShowWorkspaceMenu(false);
-      if (itemContextMenu) setItemContextMenu(null);
-    };
-    document.addEventListener('click', handleClickOutside);
-    return () => document.removeEventListener('click', handleClickOutside);
-  }, [showWorkspaceMenu, itemContextMenu]);
-
-  const handleContextMenu = (e, type, item, parentInfo = null) => {
-    e.preventDefault();
-    setItemContextMenu({
-      type,
-      item,
-      parentInfo,
-      x: e.clientX,
-      y: e.clientY
+  const handleClickOutside = useCallback((e) => {
+    // Gunakan state up-to-date lewat fungsionalitas callback updater React agar anti-bocor
+    setShowWorkspaceMenu(prev => {
+      if (prev) return false;
+      return prev;
     });
-  };
+    setItemContextMenu(prev => {
+      if (prev) return null;
+      return prev;
+    });
+  }, []); // Dependency array kosong menjamin fungsi ini hanya dibuat 1 kali selama siklus hidup aplikasi
+
+  // Pasang listener tunggal yang patuh dan bersih
+  useEffect(() => {
+    document.addEventListener('click', handleClickOutside);
+    return () => {
+      document.removeEventListener('click', handleClickOutside);
+    };
+  }, [handleClickOutside]);
 
   const handleRenameItem = () => {
     if (!itemContextMenu) return;
@@ -446,7 +448,7 @@ export default function Sidebar({ isOpen, onSelectFile, onWorkspaceLoaded, books
   };
 
   return (
-    <aside style={{...styles.sidebar, display: isOpen ? 'flex' : 'none'}}>
+    <aside ref={sidebarRef} style={{...styles.sidebar, display: isOpen ? 'flex' : 'none'}}>
       <div style={styles.topSection}>
         <div style={styles.header}>
           <div style={styles.workspaceInfo}>

@@ -5,7 +5,6 @@ import TiptapEditor from './features/editor/TiptapEditor';
 import TitleBar from './components/TitleBar';
 import StatusBar from './components/StatusBar';
 import WorkspaceDashboard from './components/WorkspaceDashboard';
-
 import MusePanel from './components/MusePanel';
 
 import "./App.css"; 
@@ -20,11 +19,8 @@ function App() {
   const [editor, setEditor] = useState(null);
   const [unsavedFiles, setUnsavedFiles] = useState(new Set());
   const [hasUncommittedChanges, setHasUncommittedChanges] = useState(false);
-  const [docStatus, setStatus] = useState({
-    wordCount: 0,
-    type: 'CHAPTER',
-    draft: 'DRAFT A'
-  });
+
+  // 🌟 OPTIMASI 3.C: State docStatus dihapus dari sini agar App tidak re-render tiap ketukan keyboard!
 
   useEffect(() => {
     if (workspace) {
@@ -65,9 +61,7 @@ function App() {
     } catch (e) { console.error(e); }
   };
 
-  const handleStatusChange = (newStatus) => {
-    setStatus(prev => ({ ...prev, ...newStatus }));
-  };
+  // 🌟 OPTIMASI 3.C: Fungsi handleStatusChange dihapus karena penayangan status langsung diurus oleh StatusBar internal
 
   const handleRenameDocument = async (id, newTitle) => {
     try {
@@ -98,35 +92,57 @@ function App() {
 
   const handleNavigateToPage = async (pageTitle) => {
     try {
-      console.log(`[Rosette] Mencari halaman: "${pageTitle}" di seluruh buku...`);
+      console.log(`[Rosette QA] Menjalankan Context-Aware Navigation untuk: "${pageTitle}"`);
       
-      // Ambil semua buku yang ada di workspace
       const allBooks = await invoke('list_books');
       
+      const currentBookId = selectedBookId || activeFile?.book_id;
+      const activeBook = allBooks.find(b => b.id === currentBookId);
+
+      if (activeBook) {
+        const activeBookDocs = await invoke('list_documents', { bookId: activeBook.id });
+        const matchInActiveBook = activeBookDocs.find(doc => {
+          const cleanDocTitle = (doc.title || doc.file_path.replace('.md', '')).trim().toLowerCase();
+          return cleanDocTitle === pageTitle.trim().toLowerCase();
+        });
+
+        if (matchInActiveBook) {
+          console.log(`[Rosette] Sukses! Menemukan "${pageTitle}" di dalam ruang buku aktif: "${activeBook.name}"`);
+          setActiveFile({
+            id: matchInActiveBook.id,
+            book_id: activeBook.id,
+            name: matchInActiveBook.title || matchInActiveBook.file_path,
+            path: `${activeBook.git_path}/${matchInActiveBook.file_path}`
+          });
+          return;
+        }
+      }
+
+      console.log(`[Rosette] Teks tidak ada di buku aktif. Memulai pencarian lintas buku...`);
       for (const book of allBooks) {
-        // Ambil semua dokumen di dalam buku ini
+        if (book.id === currentBookId) continue;
+
         const docs = await invoke('list_documents', { bookId: book.id });
-        
-        // Cari dokumen yang judul atau nama filenya cocok dengan target link
         const targetFile = docs.find(doc => {
           const cleanDocTitle = (doc.title || doc.file_path.replace('.md', '')).trim().toLowerCase();
           return cleanDocTitle === pageTitle.trim().toLowerCase();
         });
 
         if (targetFile) {
-          console.log(`[Rosette] Halaman ditemukan di buku "${book.name}". Mengalihkan...`);
-          
-          // Set file aktif untuk memicu re-render TiptapEditor dengan konten baru
+          console.log(`[Rosette] Menemukan objek cadangan di buku lain: "${book.name}". Mengalihkan...`);
           setActiveFile({
             id: targetFile.id,
+            book_id: book.id,
             name: targetFile.title || targetFile.file_path,
             path: `${book.git_path}/${targetFile.file_path}`
           });
+          
+          setSelectedBookId(book.id);
           return;
         }
       }
       
-      console.warn(`[Rosette] Halaman "${pageTitle}" tidak ditemukan di buku manapun.`);
+      console.warn(`[Rosette] Halaman "${pageTitle}" sama sekali tidak ditemukan di seluruh workspace.`);
     } catch (err) {
       console.error("[Rosette] Gagal melakukan navigasi internal:", err);
     }
@@ -136,7 +152,7 @@ function App() {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', overflow: 'hidden' }}>
       <TitleBar 
         workspaceName={workspace?.name} 
-        activeDraft={docStatus.draft} 
+        activeDraft="DRAFT A" // 🌟 Di-hardcode sementara atau ambil dari config statis
         onToggleMuse={() => setIsMuseOpen(!isMuseOpen)}
         onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
       />
@@ -158,7 +174,7 @@ function App() {
           {activeFile ? (
             <TiptapEditor 
               currentFile={activeFile} 
-              onStatusChange={handleStatusChange}
+              // 🌟 OPTIMASI 3.C: onStatusChange dilepas agar ketikan tidak memicu re-render App.jsx
               onEditorCreated={setEditor}
               onRenameDocument={handleRenameDocument}
               onMarkUnsaved={markUnsaved}
@@ -187,10 +203,11 @@ function App() {
         />
       </div>
 
+      {/* 🌟 OPTIMASI 3.C: Properti yang berubah setiap ketukan keyboard (wordCount) dilepas. */}
+      {/* StatusBar sekarang mandiri mendengarkan event bus lokal */}
       <StatusBar 
-        type={docStatus.type}
-        draft={docStatus.draft} 
-        wordCount={docStatus.wordCount} 
+        type="CHAPTER"
+        draft="DRAFT A" 
         model="Qwen 2.5 (Local)" 
         isChanged={hasUncommittedChanges}
       />

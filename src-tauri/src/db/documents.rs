@@ -5,6 +5,7 @@ use uuid::Uuid;
 use chrono::Utc;
 use walkdir::WalkDir;
 
+// 🌟 PERBAIKAN STRUCT: Ditambahkan sort_order agar sinkron dengan database & query SELECT *
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Document {
     pub id: String,
@@ -13,6 +14,7 @@ pub struct Document {
     pub title: Option<String>,
     pub doc_type: Option<String>,
     pub tags: Option<String>, // JSON string
+    pub sort_order: i32,      // 🌟 Ditambahkan agar query_as / SELECT * tidak crash
     pub created_at: i64,
     pub modified_at: i64,
 }
@@ -32,13 +34,14 @@ pub async fn create(
         title: title.map(|s| s.to_string()),
         doc_type: doc_type.map(|s| s.to_string()),
         tags: tags.map(|s| s.to_string()),
+        sort_order: 0, // Default order baru
         created_at: Utc::now().timestamp(),
         modified_at: Utc::now().timestamp(),
     };
 
     sqlx::query(
-        "INSERT INTO documents (id, book_id, file_path, title, doc_type, tags, created_at, modified_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO documents (id, book_id, file_path, title, doc_type, tags, sort_order, created_at, modified_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
     )
     .bind(&doc.id)
     .bind(&doc.book_id)
@@ -46,6 +49,7 @@ pub async fn create(
     .bind(&doc.title)
     .bind(&doc.doc_type)
     .bind(&doc.tags)
+    .bind(doc.sort_order)
     .bind(doc.created_at)
     .bind(doc.modified_at)
     .execute(pool)
@@ -55,6 +59,7 @@ pub async fn create(
 }
 
 pub async fn list_by_book(pool: &SqlitePool, book_id: &str) -> Result<Vec<Document>> {
+    // Menggunakan SELECT * kini aman karena sort_order sudah ada di struct Document
     let docs = sqlx::query_as::<_, Document>(
         "SELECT * FROM documents WHERE book_id = ? ORDER BY sort_order ASC, created_at ASC"
     )
@@ -84,11 +89,11 @@ pub async fn move_document(pool: &SqlitePool, id: &str, new_book_id: &str) -> Re
 }
 
 pub async fn sync_book_files(pool: &SqlitePool, book_id: &str, book_path: &str) -> Result<()> {
-    // 1. Get existing documents from DB
+    // 1. Ambil seluruh dokumen yang terdaftar di database saat ini
     let existing_docs = list_by_book(pool, book_id).await?;
     let mut db_paths: std::collections::HashSet<String> = existing_docs.into_iter().map(|d| d.file_path).collect();
 
-    // 2. Scan filesystem
+    // 2. Pindai filesystem lokal
     for entry in WalkDir::new(book_path).into_iter().filter_map(|e| e.ok()) {
         let path = entry.path();
         if path.is_file() && path.extension().map_or(false, |ext| ext == "md") {
@@ -97,38 +102,102 @@ pub async fn sync_book_files(pool: &SqlitePool, book_id: &str, book_path: &str) 
             if db_paths.contains(&relative_path) {
                 db_paths.remove(&relative_path);
             } else {
-                // New file
                 let title = path.file_stem().map(|s| s.to_string_lossy().to_string());
                 create(pool, book_id, &relative_path, title.as_deref(), None, None).await?;
             }
         }
     }
 
-    // 3. Remove documents from DB that no longer exist on disk
+    // 3. 🌟 FAILSAFE SINKRONISASI (Tetap Dipertahankan Aman Dari Glitch Cloud)
     for missing_path in db_paths {
-        sqlx::query("DELETE FROM documents WHERE book_id = ? AND file_path = ?")
+        let full_check_path = std::path::Path::new(book_path).join(&missing_path);
+        
+        if !full_check_path.exists() {
+            let _ = sqlx::query(
+                "DELETE FROM links 
+                 WHERE source_doc_id = (SELECT id FROM documents WHERE file_path = ? AND book_id = ?) 
+                    OR target_doc_id = (SELECT id FROM documents WHERE file_path = ? AND book_id = ?)"
+            )
+            .bind(&missing_path)
             .bind(book_id)
-            .bind(missing_path)
+            .bind(&missing_path)
+            .bind(book_id)
             .execute(pool)
-            .await?;
+            .await;
+
+            sqlx::query("DELETE FROM documents WHERE book_id = ? AND file_path = ?")
+                .bind(book_id)
+                .bind(missing_path)
+                .execute(pool)
+                .await?;
+        }
     }
 
     Ok(())
 }
 
-pub async fn search(pool: &SqlitePool, book_id: &str, query: &str) -> Result<Vec<Document>> {
-    let docs = sqlx::query_as::<_, Document>(
-        "SELECT d.* FROM documents d 
-         JOIN documents_fts f ON d.id = f.rowid 
-         WHERE d.book_id = ? AND fts5_match(?) 
-         ORDER BY rank"
-    )
-    .bind(book_id)
-    .bind(query)
-    .fetch_all(pool)
-    .await?;
+pub fn sanitize_fts5_query(input: &str) -> String {
+    let clean = input.replace('"', " ")
+                     .replace(':', " ")
+                     .replace('*', " ")
+                     .replace('(', " ")
+                     .replace(')', " ");
 
-    Ok(docs)
+    let mut sanitized_words = Vec::new();
+
+    for word in clean.split_whitespace() {
+        let upper_word = word.to_uppercase();
+        if upper_word == "AND" || upper_word == "OR" || upper_word == "NOT" || upper_word.starts_with("NEAR") {
+            sanitized_words.push(format!("\"{}\"", word));
+        } else {
+            sanitized_words.push(format!("\"{}\"*", word));
+        }
+    }
+
+    if sanitized_words.is_empty() {
+        "".to_string()
+    } else {
+        sanitized_words.join(" ")
+    }
+}
+
+pub async fn search(pool: &SqlitePool, book_id: &str, query: &str) -> crate::Result<Vec<Document>> {
+    let safe_query = sanitize_fts5_query(query);
+
+    if safe_query.is_empty() && !query.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // 🌟 PERBAIKAN QUERY SELECT: Menghapus field 'content' yang fiktif, 
+    // dan menarik kolom asli tabel yang sesuai dengan isi struct Document Rust.
+    let rows = if book_id.is_empty() {
+        sqlx::query_as::<_, Document>(
+            "SELECT id, book_id, file_path, title, doc_type, tags, sort_order, created_at, modified_at 
+             FROM documents 
+             WHERE id IN (
+                 SELECT rowid FROM documents_fts WHERE documents_fts MATCH ?
+             )
+             ORDER BY sort_order ASC"
+        )
+        .bind(&safe_query)
+        .fetch_all(pool)
+        .await?
+    } else {
+        sqlx::query_as::<_, Document>(
+            "SELECT id, book_id, file_path, title, doc_type, tags, sort_order, created_at, modified_at 
+             FROM documents 
+             WHERE book_id = ? AND id IN (
+                 SELECT rowid FROM documents_fts WHERE documents_fts MATCH ?
+             )
+             ORDER BY sort_order ASC"
+        )
+        .bind(book_id)
+        .bind(&safe_query)
+        .fetch_all(pool)
+        .await?
+    };
+
+    Ok(rows)
 }
 
 pub async fn rename_document(pool: &SqlitePool, id: &str, new_title: &str) -> Result<()> {
@@ -142,6 +211,7 @@ pub async fn rename_document(pool: &SqlitePool, id: &str, new_title: &str) -> Re
 }
 
 pub async fn delete_document(pool: &SqlitePool, id: &str) -> Result<Option<String>> {
+    // Menggunakan SELECT * sekarang aman karena struct Document sudah lengkap
     let doc = sqlx::query_as::<_, Document>(
         "SELECT * FROM documents WHERE id = ?"
     )
@@ -159,4 +229,16 @@ pub async fn delete_document(pool: &SqlitePool, id: &str) -> Result<Option<Strin
     } else {
         Ok(None)
     }
+}
+
+pub async fn get_all_documents(pool: &SqlitePool) -> Result<Vec<Document>> {
+    let docs = sqlx::query_as::<_, Document>(
+        "SELECT id, book_id, file_path, title, doc_type, tags, sort_order, created_at, modified_at 
+         FROM documents 
+         ORDER BY title ASC, created_at ASC"
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(docs)
 }

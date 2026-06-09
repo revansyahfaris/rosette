@@ -47,7 +47,8 @@ fn main() {
             move_document_to_book,
             search_documents,
             pick_folder,
-            open_workspace_dialog
+            open_workspace_dialog,
+            get_all_documents
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
@@ -130,7 +130,10 @@ export default function TiptapEditor({ currentFile, onStatusChange, onEditorCrea
   const [searchQuery, setSearchQuery] = useState('');
   const [availableDocs, setAvailableDocs] = useState([]);
   const [filteredDocs, setFilteredDocs] = useState([]);
+  
   const [selectedTarget, setSelectedTarget] = useState(null); // Menyimpan page terpilih sebelum confirm
+
+  const saveTimeoutRef = useRef(null);
 
   const editor = useEditor({
     extensions: [
@@ -218,9 +221,10 @@ export default function TiptapEditor({ currentFile, onStatusChange, onEditorCrea
     },
     onUpdate: ({ editor, transaction }) => {
       const words = editor.storage.characterCount.words();
-      if (onStatusChange) {
-        onStatusChange({ wordCount: words });
-      }
+      
+      // 🌟 OPTIMASI MUTLAK (Audit 3.C): Tembakkan langsung ke Event Bus tanpa menyentuh App.jsx
+      const event = new CustomEvent('rosette-word-count-update', { detail: { wordCount: words } });
+      window.dispatchEvent(event);
       
       if (editor.isFocused && currentFile?.id && onMarkUnsaved) {
         if (transaction.docChanged) {
@@ -257,20 +261,33 @@ export default function TiptapEditor({ currentFile, onStatusChange, onEditorCrea
   }, [currentFile?.path, editor]);
 
   // Autosave HTML Konten Bersih
-  useEffect(() => {
+ useEffect(() => {
     if (!editor || !currentFile?.path) return;
     
     const handleUpdate = () => {
-      const htmlContent = editor.getHTML(); 
-      const fullContent = frontmatter ? `${frontmatter}\n\n${htmlContent}` : htmlContent;
+      // Jika user masih mengetik, hapus ancangan timer penyimpanan sebelumnya
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
 
-      invoke('save_document', { path: currentFile.path, content: fullContent })
-        .catch(err => console.error("Auto-save failed:", err));
+      // Setel ulang timer baru (menunggu 1200ms setelah aktivitas mengetik berhenti)
+      saveTimeoutRef.current = setTimeout(() => {
+        const htmlContent = editor.getHTML(); 
+        const fullContent = frontmatter ? `${frontmatter}\n\n${htmlContent}` : htmlContent;
+
+        console.log(`[Rosette QA] Memulai auto-save aman untuk: ${currentFile.path}`);
+        invoke('save_document', { path: currentFile.path, content: fullContent })
+          .catch(err => console.error("Auto-save failed:", err));
+      }, 1200);
     };
 
     editor.on('update', handleUpdate);
     return () => {
       editor.off('update', handleUpdate);
+      // Bersihkan sisa timer saat dokumen ditutup atau berganti halaman
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
     };
   }, [editor, currentFile?.path, frontmatter]);
 
@@ -284,23 +301,24 @@ export default function TiptapEditor({ currentFile, onStatusChange, onEditorCrea
   const handleTriggerLinkModal = async () => {
     if (!editor) return;
     setSearchQuery('');
-    setSelectedTarget(null); // Reset pilihan lama
+    setSelectedTarget(null);
     setIsModalOpen(true);
 
     try {
-      const bookList = await invoke('list_books');
-      let allDocs = [];
-      for (const book of bookList) {
-        const docs = await invoke('list_documents', { bookId: book.id });
-        docs.forEach(d => {
-          const cleanTitle = d.title || d.file_path.split('\\').pop().split('/').pop().replace('.md', '');
-          allDocs.push({ id: d.id, label: cleanTitle, filePath: d.file_path });
-        });
-      }
-      setAvailableDocs(allDocs);
-      setFilteredDocs(allDocs);
+      console.log("[Rosette Optimization] Mengambil seluruh dokumen workspace via single IPC invoke...");
+      
+      // Cukup panggil satu command tunggal yang sudah dioptimasi di sisi Rust
+      const allDocsList = await invoke('get_all_documents');
+      
+      const formattedDocs = allDocsList.map(d => {
+        const cleanTitle = d.title || d.file_path.split('\\').pop().split('/').pop().replace('.md', '');
+        return { id: d.id, label: cleanTitle };
+      });
+
+      setAvailableDocs(formattedDocs);
+      setFilteredDocs(formattedDocs);
     } catch (err) {
-      console.error("Gagal memuat daftar halaman:", err);
+      console.error("Gagal memuat daftar halaman via optimized query:", err);
     }
   };
 

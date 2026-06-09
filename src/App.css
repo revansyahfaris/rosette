@@ -72,6 +72,16 @@ body {
   background: var(--rose-400);
 }
 
+::selection {
+  background: var(--rose-200);
+  color: var(--rose-900);
+}
+
+.tiptap ::selection {
+  background: var(--rose-500);
+  color: var(--bg-main);
+}
+
 .custom-scrollbar {
   overflow-y: auto;
 }

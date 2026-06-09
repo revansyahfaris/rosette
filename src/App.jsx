@@ -96,6 +96,42 @@ function App() {
     });
   };
 
+  const handleNavigateToPage = async (pageTitle) => {
+    try {
+      console.log(`[Rosette] Mencari halaman: "${pageTitle}" di seluruh buku...`);
+      
+      // Ambil semua buku yang ada di workspace
+      const allBooks = await invoke('list_books');
+      
+      for (const book of allBooks) {
+        // Ambil semua dokumen di dalam buku ini
+        const docs = await invoke('list_documents', { bookId: book.id });
+        
+        // Cari dokumen yang judul atau nama filenya cocok dengan target link
+        const targetFile = docs.find(doc => {
+          const cleanDocTitle = (doc.title || doc.file_path.replace('.md', '')).trim().toLowerCase();
+          return cleanDocTitle === pageTitle.trim().toLowerCase();
+        });
+
+        if (targetFile) {
+          console.log(`[Rosette] Halaman ditemukan di buku "${book.name}". Mengalihkan...`);
+          
+          // Set file aktif untuk memicu re-render TiptapEditor dengan konten baru
+          setActiveFile({
+            id: targetFile.id,
+            name: targetFile.title || targetFile.file_path,
+            path: `${book.git_path}/${targetFile.file_path}`
+          });
+          return;
+        }
+      }
+      
+      console.warn(`[Rosette] Halaman "${pageTitle}" tidak ditemukan di buku manapun.`);
+    } catch (err) {
+      console.error("[Rosette] Gagal melakukan navigasi internal:", err);
+    }
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', overflow: 'hidden' }}>
       <TitleBar 
@@ -127,6 +163,7 @@ function App() {
               onRenameDocument={handleRenameDocument}
               onMarkUnsaved={markUnsaved}
               onMarkSaved={markSaved}
+              onNavigateToPage={handleNavigateToPage}
             />
           ) : workspace ? (
             <WorkspaceDashboard 

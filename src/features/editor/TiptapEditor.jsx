@@ -9,7 +9,7 @@ import Highlight from '@tiptap/extension-highlight';
 import TextAlign from '@tiptap/extension-text-align';
 import TaskList from '@tiptap/extension-task-list';
 import TaskItem from '@tiptap/extension-task-item';
-import Link from '@tiptap/extension-link';
+import TiptapHyperlink from '@tiptap/extension-link'; // Menggunakan Link asli Tiptap untuk Hyperlink murni
 import Image from '@tiptap/extension-image';
 import { FontFamily } from '@tiptap/extension-font-family';
 import { TextStyle } from '@tiptap/extension-text-style';
@@ -18,6 +18,8 @@ import HorizontalRule from '@tiptap/extension-horizontal-rule';
 import { Color } from '@tiptap/extension-color';
 import Placeholder from '@tiptap/extension-placeholder';
 import CharacterCount from '@tiptap/extension-character-count';
+import Mention from '@tiptap/extension-mention';
+import LinkSuggestion from './LinkSuggestion';
 import { invoke } from '@tauri-apps/api/core';
 import { 
   Bold, Italic, Underline as UnderlineIcon, Strikethrough, 
@@ -25,10 +27,10 @@ import {
   List, ListOrdered, CheckSquare, Quote, Minus,
   Type, Highlighter, Undo2, Redo2, Eraser,
   Superscript as SuperIcon, Subscript as SubIcon,
-  Settings
+  Link2, X, Search, FileText
 } from 'lucide-react';
 
-const Toolbar = ({ editor }) => {
+const Toolbar = ({ editor, onTriggerLinkModal }) => {
   if (!editor) return null;
 
   const btnStyle = (active) => ({
@@ -67,6 +69,11 @@ const Toolbar = ({ editor }) => {
           <button onClick={() => editor.chain().focus().toggleItalic().run()} style={btnStyle(editor.isActive('italic'))} title="Italic"><Italic size={14} /></button>
           <button onClick={() => editor.chain().focus().toggleUnderline().run()} style={btnStyle(editor.isActive('underline'))} title="Underline"><UnderlineIcon size={14} /></button>
           <button onClick={() => editor.chain().focus().toggleStrike().run()} style={btnStyle(editor.isActive('strike'))} title="Strike"><Strikethrough size={14} /></button>
+          
+          {/* Tombol Hyperlink */}
+          <button onClick={onTriggerLinkModal} style={btnStyle(editor.isActive('link'))} title="Hyperlink Teks Terblok">
+            <Link2 size={14} style={{ color: 'var(--rose-600)' }} />
+          </button>
         </div>
         
         <div style={styles.toolbarDivider} />
@@ -82,13 +89,7 @@ const Toolbar = ({ editor }) => {
 
         {/* Alignment */}
         <div style={styles.toolbarSection}>
-          <button 
-            onClick={() => editor.chain().focus().setTextAlign('left').run()} 
-            style={btnStyle(editor.isActive({ textAlign: 'left' }) || (!editor.isActive({ textAlign: 'center' }) && !editor.isActive({ textAlign: 'right' }) && !editor.isActive({ textAlign: 'justify' })))} 
-            title="Align Left"
-          >
-            <AlignLeft size={14} />
-          </button>
+          <button onClick={() => editor.chain().focus().setTextAlign('left').run()} style={btnStyle(editor.isActive({ textAlign: 'left' }) || (!editor.isActive({ textAlign: 'center' }) && !editor.isActive({ textAlign: 'right' }) && !editor.isActive({ textAlign: 'justify' })))} title="Align Left"><AlignLeft size={14} /></button>
           <button onClick={() => editor.chain().focus().setTextAlign('center').run()} style={btnStyle(editor.isActive({ textAlign: 'center' }))} title="Align Center"><AlignCenter size={14} /></button>
           <button onClick={() => editor.chain().focus().setTextAlign('right').run()} style={btnStyle(editor.isActive({ textAlign: 'right' }))} title="Align Right"><AlignRight size={14} /></button>
           <button onClick={() => editor.chain().focus().setTextAlign('justify').run()} style={btnStyle(editor.isActive({ textAlign: 'justify' }))} title="Justify"><AlignJustify size={14} /></button>
@@ -118,11 +119,18 @@ const Toolbar = ({ editor }) => {
   );
 };
 
-export default function TiptapEditor({ currentFile, onStatusChange, onEditorCreated, onRenameDocument, onMarkUnsaved, onMarkSaved }) {
+export default function TiptapEditor({ currentFile, onStatusChange, onEditorCreated, onRenameDocument, onMarkUnsaved, onMarkSaved, onNavigateToPage }) {
   const [, setTick] = useState(0);
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameTitle, setRenameTitle] = useState('');
   const [frontmatter, setFrontmatter] = useState('');
+
+  // State Pop-up Search Modal
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [availableDocs, setAvailableDocs] = useState([]);
+  const [filteredDocs, setFilteredDocs] = useState([]);
+  const [selectedTarget, setSelectedTarget] = useState(null); // Menyimpan page terpilih sebelum confirm
 
   const editor = useEditor({
     extensions: [
@@ -139,7 +147,6 @@ export default function TiptapEditor({ currentFile, onStatusChange, onEditorCrea
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
       TaskList,
       TaskItem.configure({ nested: true }),
-      Link.configure({ openOnClick: false }),
       Image,
       FontFamily,
       TextStyle,
@@ -151,13 +158,63 @@ export default function TiptapEditor({ currentFile, onStatusChange, onEditorCrea
         emptyEditorClass: 'is-editor-empty',
       }),
       CharacterCount,
+      // Hyperlink Bersih Tanpa Merubah Teks
+      TiptapHyperlink.configure({
+        openOnClick: false,
+        autolink: false,
+        HTMLAttributes: {
+          class: 'rosette-internal-link',
+          target: null,
+          rel: null,
+          style: 'color: var(--rose-600, #8a1240); font-weight: 600; text-decoration: underline; cursor: pointer;'
+        }
+      }),
+      // Wikilink [[Judul]] Support
+      Mention.configure({
+        HTMLAttributes: {
+          class: 'rosette-internal-link',
+          style: 'color: var(--rose-600, #8a1240); font-weight: 600; text-decoration: underline; cursor: pointer;'
+        },
+        suggestion: LinkSuggestion,
+      }),
     ],
     content: '',
     editorProps: { 
       attributes: { 
         class: 'focus:outline-none', 
         style: 'outline: none;' 
-      } 
+      },
+      // 🌟 INTERSEPSI EVENT DOM UNTUK MENCEGAH EKSTERNAL BROWSER
+      handleDOMEvents: {
+        click: (view, event) => {
+          const link = event.target.closest('a') || event.target.closest('.rosette-internal-link');
+          
+          if (link) {
+            // MATIKAN TOTAL AKSI BAWAAN
+            event.preventDefault();
+            event.stopPropagation();
+            
+            let targetPage = link.getAttribute('href');
+            
+            // Jika menggunakan protokol internal rosette://, hapus prefixnya
+            if (targetPage && targetPage.startsWith('rosette://')) {
+              targetPage = targetPage.replace('rosette://', '');
+            } else if (!targetPage) {
+              const rawText = link.innerText || "";
+              const match = rawText.match(/\[\[([^|\]]+)(?:\|[^\]]+)?\]\]/);
+              targetPage = match ? match[1] : rawText.replace(/[\[\]]/g, '');
+            }
+            
+            if (targetPage && onNavigateToPage) {
+              console.log(`[Rosette] Navigasi internal ke: ${targetPage}`);
+              onNavigateToPage(targetPage);
+            }
+            
+            return true; // Beritahu Prosemirror bahwa kita sudah menangani ini
+          }
+          return false;
+        }
+      }
     },
     onUpdate: ({ editor, transaction }) => {
       const words = editor.storage.characterCount.words();
@@ -165,9 +222,7 @@ export default function TiptapEditor({ currentFile, onStatusChange, onEditorCrea
         onStatusChange({ wordCount: words });
       }
       
-      // Only mark unsaved if the editor is actually focused (meaning a user did it, not a programmatic load)
       if (editor.isFocused && currentFile?.id && onMarkUnsaved) {
-        // Also check if the document actually changed to avoid marking unsaved on mere selections
         if (transaction.docChanged) {
           onMarkUnsaved(currentFile.id);
         }
@@ -178,23 +233,15 @@ export default function TiptapEditor({ currentFile, onStatusChange, onEditorCrea
     },
   });
 
-  useEffect(() => {
-    if (editor && onEditorCreated) {
-      onEditorCreated(editor);
-    }
-  }, [editor, onEditorCreated]);
-
+  // Pemuatan Dokumen
   useEffect(() => {
     const loadFile = async () => {
       if (currentFile?.path && editor) {
         try {
           const content = await invoke('load_document', { path: currentFile.path });
-          
-          // Extract and store YAML frontmatter
           const match = content.match(/^---[\s\S]*?---/);
           setFrontmatter(match ? match[0] : '');
 
-          // Strip YAML frontmatter for the editor
           const body = content.replace(/^---[\s\S]*?---/, '').trim();
           editor.commands.setContent(body || '<p></p>', false);
           
@@ -207,7 +254,76 @@ export default function TiptapEditor({ currentFile, onStatusChange, onEditorCrea
       }
     };
     loadFile();
-  }, [currentFile, editor]);
+  }, [currentFile?.path, editor]);
+
+  // Autosave HTML Konten Bersih
+  useEffect(() => {
+    if (!editor || !currentFile?.path) return;
+    
+    const handleUpdate = () => {
+      const htmlContent = editor.getHTML(); 
+      const fullContent = frontmatter ? `${frontmatter}\n\n${htmlContent}` : htmlContent;
+
+      invoke('save_document', { path: currentFile.path, content: fullContent })
+        .catch(err => console.error("Auto-save failed:", err));
+    };
+
+    editor.on('update', handleUpdate);
+    return () => {
+      editor.off('update', handleUpdate);
+    };
+  }, [editor, currentFile?.path, frontmatter]);
+
+  useEffect(() => {
+    if (editor && onEditorCreated) {
+      onEditorCreated(editor);
+    }
+  }, [editor, onEditorCreated]);
+
+  // Memicu Modal Pop-up Search (Ditambahkan kata kunci async dengan benar 🌟)
+  const handleTriggerLinkModal = async () => {
+    if (!editor) return;
+    setSearchQuery('');
+    setSelectedTarget(null); // Reset pilihan lama
+    setIsModalOpen(true);
+
+    try {
+      const bookList = await invoke('list_books');
+      let allDocs = [];
+      for (const book of bookList) {
+        const docs = await invoke('list_documents', { bookId: book.id });
+        docs.forEach(d => {
+          const cleanTitle = d.title || d.file_path.split('\\').pop().split('/').pop().replace('.md', '');
+          allDocs.push({ id: d.id, label: cleanTitle, filePath: d.file_path });
+        });
+      }
+      setAvailableDocs(allDocs);
+      setFilteredDocs(allDocs);
+    } catch (err) {
+      console.error("Gagal memuat daftar halaman:", err);
+    }
+  };
+
+  // Live query search filter
+  useEffect(() => {
+    const filtered = availableDocs.filter(doc => 
+      doc.label.toLowerCase().includes(searchQuery.toLowerCase())
+    );
+    setFilteredDocs(filtered);
+  }, [searchQuery, availableDocs]);
+
+  // Eksekusi Tautan Saat Tombol CONFIRM Diklik
+  const handleConfirmHyperlink = () => {
+    if (editor && selectedTarget) {
+      editor
+        .chain()
+        .focus()
+        .setLink({ href: `rosette://${selectedTarget}` }) // Gunakan protokol internal agar Tauri tidak buka tab browser eksternal
+        .run();
+    }
+    setIsModalOpen(false);
+    setSelectedTarget(null);
+  };
 
   const submitRename = async (e) => {
     if (e.key === 'Enter' && renameTitle.trim()) {
@@ -246,7 +362,7 @@ export default function TiptapEditor({ currentFile, onStatusChange, onEditorCrea
 
   return (
     <div style={styles.editorPanel} onKeyDown={handleKeyDown}>
-      <Toolbar editor={editor} />
+      <Toolbar editor={editor} onTriggerLinkModal={handleTriggerLinkModal} />
       
       <div style={styles.scrollArea}>
         <div style={styles.proseContainer}>
@@ -279,65 +395,119 @@ export default function TiptapEditor({ currentFile, onStatusChange, onEditorCrea
           <div style={styles.footerOrnament}>§</div>
         </div>
       </div>
+
+      {/* Pop-up Search Modal Rosette */}
+      {isModalOpen && (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modalCard}>
+            <div style={styles.modalHeader}>
+              <div>
+                <h3 style={styles.modalTitle}>CONNECT TO CHRONICLE PAGE</h3>
+                <p style={styles.modalSubtitle}>Pilih halaman untuk ditautkan pada teks ter-highlight:</p>
+              </div>
+              <button onClick={() => setIsModalOpen(false)} style={styles.closeModalBtn}><X size={16} /></button>
+            </div>
+            
+            {/* Input Live Search Box */}
+            <div style={styles.searchBoxWrapper}>
+              <Search size={14} style={{ color: 'var(--rose-400)', marginRight: '6px' }} />
+              <input 
+                type="text" 
+                autoFocus
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                style={styles.modalInput}
+                placeholder="Ketik nama dokumen/halaman cerita..."
+              />
+            </div>
+
+            {/* List Hasil Pencarian */}
+            <div style={styles.listContainer}>
+              {filteredDocs.length === 0 ? (
+                <div style={styles.emptyState}>Tidak ada halaman fiksi yang cocok...</div>
+              ) : (
+                filteredDocs.map((doc) => {
+                  const isSelected = selectedTarget === doc.label;
+                  return (
+                    <div 
+                      key={doc.id} 
+                      style={{
+                        ...styles.listItem,
+                        backgroundColor: isSelected ? 'var(--rose-100)' : 'transparent',
+                        border: isSelected ? '1px solid var(--rose-300)' : '1px solid transparent',
+                      }}
+                      onClick={() => setSelectedTarget(doc.label)}
+                    >
+                      <FileText size={14} style={{ color: isSelected ? 'var(--rose-700)' : 'var(--rose-400)', marginRight: '8px' }} />
+                      <span style={{
+                        ...styles.itemLabel,
+                        fontWeight: isSelected ? '600' : 'normal'
+                      }}>{doc.label}</span>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Footer dengan tombol BATAL & CONFIRM */}
+            <div style={styles.modalFooter}>
+              <button onClick={() => setIsModalOpen(false)} style={styles.cancelBtn}>BATAL</button>
+              <button 
+                onClick={handleConfirmHyperlink} 
+                disabled={!selectedTarget}
+                style={{
+                  backgroundColor: selectedTarget ? 'var(--rose-700)' : 'var(--rose-300)',
+                  cursor: selectedTarget ? 'pointer' : 'not-allowed',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '4px',
+                  fontSize: '11px',
+                  fontWeight: '600',
+                  padding: '8px 16px',
+                  letterSpacing: '0.5px'
+                }}
+              >
+                CONFIRM
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 const styles = {
-  layout: { display: 'flex', flex: 1, overflow: 'hidden', height: '100%' },
-  editorPanel: { flex: 1, display: 'flex', flexDirection: 'column', backgroundColor: 'var(--editor-bg)', overflow: 'hidden' },
+  editorPanel: { flex: 1, display: 'flex', flexDirection: 'column', backgroundColor: 'var(--editor-bg)', overflow: 'hidden', position: 'relative' },
   toolbar: { minHeight: 'var(--toolbar-h)', borderBottom: '1px solid var(--rose-100)', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--panel-bg)', flexShrink: 0, padding: '5px' },
   toolbarContent: { display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', justifyContent: 'center' },
   toolbarSection: { display: 'flex', gap: '2px', alignItems: 'center' },
-  toolbarBtn: { background: 'none', border: '1px solid transparent', padding: '6px', cursor: 'pointer', borderRadius: '4px', transition: 'all 0.2s', display: 'flex', alignItems: 'center', justifyContent: 'center' },
+  toolbarBtn: { background: 'none', border: '1px solid transparent', padding: '6px', cursor: 'pointer', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' },
   toolbarDivider: { width: '1px', height: '18px', backgroundColor: 'var(--rose-100)', margin: '0 5px' },
   dropdownWrapper: { display: 'flex', alignItems: 'center', backgroundColor: 'rgba(255, 107, 129, 0.05)', padding: '0 8px', borderRadius: '4px', border: '1px solid var(--rose-100)' },
-  dropdown: { 
-    background: 'none', 
-    border: 'none', 
-    padding: '4px 0', 
-    fontSize: '11px', 
-    fontFamily: 'var(--font-serif-prose)', 
-    color: 'var(--rose-700)',
-    outline: 'none',
-    cursor: 'pointer'
-  },
+  dropdown: { background: 'none', border: 'none', padding: '4px 0', fontSize: '11px', fontFamily: 'var(--font-serif-prose)', color: 'var(--rose-700)', outline: 'none', cursor: 'pointer' },
   scrollArea: { flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%' },
   proseContainer: { width: '100%', maxWidth: '800px', padding: '60px 40px', minHeight: '100%' },
   docHeader: { marginBottom: '40px' },
   docTitle: { fontFamily: 'var(--font-serif-display)', fontSize: '28px', fontWeight: '600', color: 'var(--rose-800)', marginBottom: '10px' },
-  renameInput: {
-    fontFamily: 'var(--font-serif-display)', 
-    fontSize: '28px', 
-    fontWeight: '600', 
-    color: 'var(--rose-900)', 
-    marginBottom: '10px',
-    border: 'none',
-    borderBottom: '2px solid var(--rose-300)',
-    background: 'transparent',
-    outline: 'none',
-    width: '100%'
-  },
+  renameInput: { fontFamily: 'var(--font-serif-display)', fontSize: '28px', fontWeight: '600', color: 'var(--rose-900)', marginBottom: '10px', border: 'none', borderBottom: '2px solid var(--rose-300)', background: 'transparent', outline: 'none', width: '100%' },
   headerDivider: { height: '1px', backgroundColor: 'var(--rose-100)', marginTop: '15px' },
   editorSurface: { fontFamily: 'var(--font-serif-prose)', fontSize: '15px', lineHeight: '1.8', color: '#3e0820' },
   footerOrnament: { textAlign: 'center', marginTop: '60px', opacity: 0.2, color: 'var(--rose-800)', fontSize: '24px' },
-  chatPanel: { width: 'var(--chat-w)', backgroundColor: 'var(--chat-bg)', borderLeft: '1px solid var(--rose-100)', display: 'flex', flexDirection: 'column' },
-  chatHeader: { padding: '15px 20px', borderBottom: '1px solid var(--rose-100)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
-  chatTitle: { fontFamily: 'var(--font-serif-display)', fontSize: '15px', fontWeight: '600', color: 'var(--rose-800)' },
-  chatSettings: { background: 'none', border: 'none', color: 'var(--rose-300)', cursor: 'pointer' },
-  modeTabs: { display: 'flex', borderBottom: '1px solid var(--rose-100)' },
-  modeTab: { flex: 1, padding: '10px 0', border: 'none', background: 'none', fontSize: '9px', fontWeight: '600', color: 'var(--rose-400)', cursor: 'pointer', letterSpacing: '1px' },
-  modeTabActive: { flex: 1, padding: '10px 0', border: 'none', background: '#fff0f5', fontSize: '9px', fontWeight: '600', color: 'var(--rose-700)', borderBottom: '2px solid var(--rose-500)', cursor: 'pointer', letterSpacing: '1px' },
-  chatScroll: { flex: 1, overflowY: 'auto', padding: '20px' },
-  consistencyCard: { backgroundColor: 'white', border: '1px solid var(--rose-100)', borderRadius: '4px', padding: '12px', position: 'relative', marginBottom: '20px', boxShadow: '0 2px 5px rgba(138, 18, 64, 0.05)' },
-  cardIndicator: { position: 'absolute', left: 0, top: 0, bottom: 0, width: '3px', backgroundColor: 'var(--rose-500)' },
-  cardTitle: { fontSize: '9px', fontWeight: '600', color: 'var(--rose-800)', letterSpacing: '1px' },
-  cardText: { fontSize: '12px', color: '#584145', fontStyle: 'italic', lineHeight: '1.5' },
-  aiMessage: { fontSize: '12px', color: '#3e0820', lineHeight: '1.6' },
-  chatInputArea: { padding: '15px', borderTop: '1px solid var(--rose-100)', backgroundColor: 'white' },
-  quickActions: { display: 'flex', gap: '5px', marginBottom: '10px' },
-  quickActionBtn: { fontSize: '9px', padding: '3px 8px', border: '1px solid var(--rose-200)', borderRadius: '10px', background: 'none', color: 'var(--rose-600)', cursor: 'pointer' },
-  inputWrapper: { position: 'relative' },
-  chatInput: { width: '100%', backgroundColor: 'var(--cream)', border: '1px solid var(--rose-100)', borderRadius: '4px', padding: '8px 30px 8px 10px', fontSize: '12px', fontFamily: 'var(--font-serif-prose)', resize: 'none' },
-  sendBtn: { position: 'absolute', right: '5px', bottom: '5px', background: 'var(--rose-600)', color: 'white', border: 'none', borderRadius: '4px', width: '20px', height: '20px', fontSize: '12px', cursor: 'pointer' }
+  
+  // Modal Pop-up Styles
+  modalOverlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(62, 8, 32, 0.4)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000 },
+  modalCard: { backgroundColor: 'var(--panel-bg, #ffffff)', border: '1px solid var(--rose-200)', borderRadius: '8px', width: '100%', maxWidth: '420px', padding: '20px', boxShadow: '0 10px 30px rgba(138, 18, 64, 0.2)', display: 'flex', flexDirection: 'column', gap: '12px' },
+  modalHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '1px solid var(--rose-100)', paddingBottom: '8px' },
+  modalTitle: { margin: 0, fontFamily: 'var(--font-serif-display)', fontSize: '13px', fontWeight: '700', color: 'var(--rose-800)', letterSpacing: '0.5px' },
+  modalSubtitle: { margin: '2px 0 0 0', fontSize: '11px', color: '#666' },
+  closeModalBtn: { background: 'none', border: 'none', color: 'var(--rose-400)', cursor: 'pointer', padding: 0 },
+  searchBoxWrapper: { display: 'flex', alignItems: 'center', backgroundColor: 'var(--cream, #fffafb)', border: '1px solid var(--rose-200)', borderRadius: '6px', padding: '0 10px' },
+  modalInput: { width: '100%', border: 'none', background: 'transparent', padding: '8px 6px', fontSize: '12px', color: 'var(--rose-900)', outline: 'none' },
+  listContainer: { maxHeight: '180px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '2px', border: '1px solid var(--rose-100)', borderRadius: '6px', padding: '4px' },
+  listItem: { display: 'flex', alignItems: 'center', padding: '8px 10px', borderRadius: '4px', cursor: 'pointer', transition: 'background-color 0.15s' },
+  itemLabel: { fontSize: '12px', color: 'var(--rose-900)', fontFamily: 'var(--font-serif-prose)' },
+  emptyState: { padding: '15px', textAlign: 'center', fontSize: '11px', color: 'var(--rose-400)', fontStyle: 'italic' },
+  modalFooter: { display: 'flex', justifyContent: 'flex-end', marginTop: '4px', gap: '10px' },
+  cancelBtn: { background: 'none', border: 'none', color: 'var(--rose-400)', cursor: 'pointer', fontSize: '11px', fontWeight: '600', padding: '6px 12px' }
 };

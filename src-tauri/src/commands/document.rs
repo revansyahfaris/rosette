@@ -7,7 +7,7 @@ use regex::Regex;
 
 use once_cell::sync::Lazy;
 static WIKI_LINK_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"\[\[([^\]]+)\]\]").unwrap()
+    Regex::new(r#"<a\s+[^>]*href="([^"]+)"[^>]*>"#).unwrap()
 });
 
 #[tauri::command]

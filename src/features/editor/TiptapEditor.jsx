@@ -162,21 +162,20 @@ export default function TiptapEditor({ currentFile, onStatusChange, onEditorCrea
       }),
       CharacterCount,
       // Hyperlink Bersih Tanpa Merubah Teks
+      // Hyperlink Bersih Tanpa Merubah Teks - Disiplin Mengikuti CSS Variabel Tema Utama
       TiptapHyperlink.configure({
         openOnClick: false,
         autolink: false,
         HTMLAttributes: {
           class: 'rosette-internal-link',
-          target: null,
-          rel: null,
-          style: 'color: var(--rose-600, #8a1240); font-weight: 600; text-decoration: underline; cursor: pointer;'
+          style: 'color: var(--rose-600); font-weight: 600; text-decoration: underline; cursor: pointer;'
         }
       }),
-      // Wikilink [[Judul]] Support
+      // Wikilink [[Judul]] Support - Disiplin Mengikuti CSS Variabel Tema Utama
       Mention.configure({
         HTMLAttributes: {
           class: 'rosette-internal-link',
-          style: 'color: var(--rose-600, #8a1240); font-weight: 600; text-decoration: underline; cursor: pointer;'
+          style: 'color: var(--rose-600); font-weight: 600; text-decoration: underline; cursor: pointer;'
         },
         suggestion: LinkSuggestion,
       }),
@@ -277,7 +276,17 @@ export default function TiptapEditor({ currentFile, onStatusChange, onEditorCrea
 
         console.log(`[Rosette QA] Memulai auto-save aman untuk: ${currentFile.path}`);
         invoke('save_document', { path: currentFile.path, content: fullContent })
-          .catch(err => console.error("Auto-save failed:", err));
+          .then(() => {
+            // 🌟 Beritahu StatusBar bahwa dokumen berhasil disimpan dengan aman
+            window.dispatchEvent(new CustomEvent('rosette-save-success'));
+          })
+          .catch(err => {
+            console.error("Auto-save failed:", err);
+            // 🌟 Tembakkan event eror visual agar StatusBar menangkap kegagalan ini
+            window.dispatchEvent(new CustomEvent('rosette-save-error', { 
+              detail: { error: "Gagal menulis ke diska. Periksa ruang penyimpanan atau hak akses folder." } 
+            }));
+          });
       }, 1200);
     };
 
@@ -423,7 +432,14 @@ export default function TiptapEditor({ currentFile, onStatusChange, onEditorCrea
                 <h3 style={styles.modalTitle}>CONNECT TO CHRONICLE PAGE</h3>
                 <p style={styles.modalSubtitle}>Pilih halaman untuk ditautkan pada teks ter-highlight:</p>
               </div>
-              <button onClick={() => setIsModalOpen(false)} style={styles.closeModalBtn}><X size={16} /></button>
+              <button 
+                onClick={() => setIsModalOpen(false)} 
+                style={styles.closeModalBtn}
+                title="Close Modal"
+                aria-label="Close Link Connection Modal"
+              >
+                <X size={16} />
+              </button>
             </div>
             
             {/* Input Live Search Box */}

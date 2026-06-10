@@ -14,13 +14,46 @@ pub struct FileInfo {
 
 #[tauri::command]
 pub async fn initialize_workspace(state: State<'_, AppState>, path: String, name: String) -> Result<Workspace, crate::RosetteError> {
-    let db_path = format!("sqlite:{}/rosette.db", path);
-    let pool = db::init_db(&db_path).await?;
-    let ws = workspace::create(&pool, &name).await?;
+    // 1. 🌟 Jalankan inisialisasi pool database SQLite terlebih dahulu ke direktori target
+    let pool = crate::db::init_db(&path).await?;
     
-    // Gunakan .write().await karena kita ingin mengubah isi state Option-nya
-    *state.db.write().await = Some(pool);
+    // 2. 🌟 Jalankan fungsi create asli dari db::workspace menggunakan pool yang didapat
+    let ws = crate::db::workspace::create(&pool, &name).await?;
+
+    // 3. Autopilot menyuntikkan data Buku Utama (6 Parameter Pas)
+    // Parameter: pool, name, slug, description, book_type, base_path
+    let default_book = crate::db::books::create(
+        &pool, 
+        "Unsorted Grimoire", 
+        "unsorted-grimoire", 
+        None, 
+        "main", 
+        &path
+    ).await?;
+    
+    // 4. Buat Folder Fisik Buku di dalam direktori
+    let book_dir = std::path::Path::new(&path).join("unsorted-grimoire");
+    std::fs::create_dir_all(&book_dir)?;
+
+    // 5. Buat File Draf Bab Pertama (.md) secara fisik di disk
+    let file_path = "untitled-scroll.md";
+    let full_file_path = book_dir.join(file_path);
+    std::fs::write(&full_file_path, "---\ntitle: \"Untitled Scroll\"\n---\n\n<p>Start writing your chronicle here...</p>")?;
+
+    // 6. Daftarkan file draf tersebut ke database dokumen
+    let _default_doc = crate::db::documents::create(
+        &pool, 
+        &default_book.id, 
+        file_path, 
+        Some("Untitled Scroll"), 
+        None, 
+        None
+    ).await?;
+
+    // 7. Simpan path dalam bentuk tipe String murni ke AppState
     *state.workspace_path.write().await = Some(path);
+    *state.db.write().await = Some(pool);
+
     Ok(ws)
 }
 

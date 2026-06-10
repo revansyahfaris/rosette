@@ -479,6 +479,8 @@ export default function Sidebar({ isOpen, onSelectFile, onWorkspaceLoaded, books
                     setShowWorkspaceMenu(!showWorkspaceMenu);
                   }} 
                   style={styles.chevron}
+                  title="Open Workspace Options"
+                  aria-label="Open Workspace Options Menu"
                 >
                   ▾
                 </button>
@@ -524,24 +526,55 @@ export default function Sidebar({ isOpen, onSelectFile, onWorkspaceLoaded, books
             <div style={styles.sectionLabelGroup}>
               <span style={styles.sectionLabel}>BOOKS</span>
               {workspace && (
-                <button onClick={() => setIsCreatingBook(true)} style={styles.addBtnSmall}>+</button>
+                <button 
+                  onClick={() => setIsCreatingBook(true)} 
+                  style={styles.addBtnSmall}
+                  title="Create New Book"
+                  aria-label="Create New Book Form"
+                >
+                  +
+                </button>
               )}
             </div>
             <div style={styles.dividerLine} />
           </div>
           
           {isCreatingBook && (
-            <div style={styles.inlineInputWrapper}>
-              <Icon name="book" style={{ color: 'var(--rose-400)', opacity: 0.5 }} />
-              <input
-                autoFocus
-                style={styles.inlineInput}
-                placeholder="Book title..."
-                value={newBookName}
-                onChange={(e) => setNewBookName(e.target.value)}
-                onKeyDown={submitCreateBook}
-                onBlur={() => { setIsCreatingBook(false); setNewBookName(''); }}
-              />
+            <div style={{ ...styles.createForm, flexDirection: 'column', alignItems: 'stretch', gap: '4px' }}>
+              {/* 🌟 Poin 01: Label Permanen agar tidak kehilangan konteks saat mengetik */}
+              <label htmlFor="newBookInput" style={{ fontSize: '11px', color: 'var(--rose-700)', fontWeight: '600', paddingLeft: '2px' }}>
+                NEW BOOK TITLE
+              </label>
+              
+              <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                <input
+                  id="newBookInput"
+                  type="text"
+                  placeholder="e.g., The Crimson Chronicles..."
+                  value={newBookName}
+                  onChange={(e) => setNewBookName(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleCreateBook()}
+                  autoFocus
+                  style={{ flex: 1 }}
+                />
+                
+                {/* 🌟 Poin 02: Atribut aria-label dan title untuk Screen Reader */}
+                <button 
+                  onClick={handleCreateBook} 
+                  title="Confirm Create Book"
+                  aria-label="Confirm Create Book"
+                >
+                  <Plus size={14} />
+                </button>
+                
+                <button 
+                  onClick={() => setIsCreatingBook(false)} 
+                  title="Cancel"
+                  aria-label="Cancel creating book"
+                >
+                  <X size={14} />
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -589,6 +622,7 @@ export default function Sidebar({ isOpen, onSelectFile, onWorkspaceLoaded, books
                   onClick={(e) => { e.stopPropagation(); setCreatingDocInBook(book.id); }} 
                   style={styles.addBtnSmall}
                   title="New Chapter"
+                  aria-label="Create New Chapter"
                 >+</button>
               </div>
               
@@ -640,17 +674,41 @@ export default function Sidebar({ isOpen, onSelectFile, onWorkspaceLoaded, books
                   ))}
 
                   {creatingDocInBook === book.id && (
-                    <div style={styles.inlineInputWrapperSmall}>
-                      <Icon name="description" style={{ opacity: 0.3, width: 12 }} />
-                      <input
-                        autoFocus
-                        style={styles.inlineInputSmall}
-                        placeholder="Chapter title..."
-                        value={newDocTitle}
-                        onChange={(e) => setNewDocTitle(e.target.value)}
-                        onKeyDown={(e) => submitCreateDocument(e, book.id, book.git_path)}
-                        onBlur={() => { setCreatingDocInBook(null); setNewDocTitle(''); }}
-                      />
+                    <div style={{ ...styles.createForm, flexDirection: 'column', alignItems: 'stretch', gap: '4px', paddingLeft: '12px' }}>
+                      {/* 🌟 Poin 01: Label Permanen untuk Bab */}
+                      <label htmlFor={`newDocInput-${book.id}`} style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: '600', tracking: '0.05em' }}>
+                        NEW CHAPTER NAME
+                      </label>
+                      
+                      <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                        <input
+                          id={`newDocInput-${book.id}`}
+                          type="text"
+                          placeholder="e.g., Prologue..."
+                          value={newDocName}
+                          onChange={(e) => setNewDocName(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && handleCreateDoc(book.id)}
+                          autoFocus
+                          style={{ flex: 1 }}
+                        />
+                        
+                        {/* 🌟 Poin 02: Aksesibilitas Tombol */}
+                        <button 
+                          onClick={() => handleCreateDoc(book.id)} 
+                          title="Confirm Create Chapter"
+                          aria-label="Confirm Create Chapter"
+                        >
+                          <Plus size={14} />
+                        </button>
+                        
+                        <button 
+                          onClick={() => setCreatingDocInBook(null)} 
+                          title="Cancel"
+                          aria-label="Cancel creating chapter"
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
                     </div>
                   )}
 
@@ -686,16 +744,39 @@ export default function Sidebar({ isOpen, onSelectFile, onWorkspaceLoaded, books
       )}
 
       <div style={styles.bottomSection}>
-        <div style={styles.panelTabs}>
-          <button style={activePanel === 'snapshots' ? styles.tabActive : styles.tab} onClick={() => setActivePanel('snapshots')}>
+        <div style={styles.panelTabs} role="tablist" aria-label="Sidebar Utility Panels">
+          <button 
+            role="tab"
+            aria-selected={activePanel === 'snapshots'}
+            style={activePanel === 'snapshots' ? styles.tabActive : styles.tab} 
+            onClick={() => setActivePanel('snapshots')}
+            title="View Archive Snapshots"
+            aria-label="View Archive Snapshots Timeline"
+          >
             <Icon name="history" />
             <span style={styles.tabLabel}>Snapshots</span>
           </button>
-          <button style={activePanel === 'links' ? styles.tabActive : styles.tab} onClick={() => setActivePanel('links')}>
+
+          <button 
+            role="tab"
+            aria-selected={activePanel === 'links'}
+            style={activePanel === 'links' ? styles.tabActive : styles.tab} 
+            onClick={() => setActivePanel('links')}
+            title="View Wikilinks Graph"
+            aria-label="View Document Internal Wikilinks"
+          >
             <Icon name="link" />
             <span style={styles.tabLabel}>Links</span>
           </button>
-          <button style={activePanel === 'drafts' ? styles.tabActive : styles.tab} onClick={() => setActivePanel('drafts')}>
+
+          <button 
+            role="tab"
+            aria-selected={activePanel === 'drafts'}
+            style={activePanel === 'drafts' ? styles.tabActive : styles.tab} 
+            onClick={() => setActivePanel('drafts')}
+            title="View Alternate Drafts"
+            aria-label="View Alternate Story Drafts"
+          >
             <Icon name="alt_route" />
             <span style={styles.tabLabel}>Drafts</span>
           </button>
